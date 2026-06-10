@@ -6,19 +6,13 @@
 detection. It supports:
 
 - Normal shot triggers from `GunFiring`, ammo changes, or both.
-- Optional incoming raycast confirmation from the shooter to your player.
-- Optional incoming hitbox scanning/raycast confirmation from the shooter to
-  your enabled hitboxes.
-- Hitbox scan drawing for Head, Torso, Arms, and Legs groups.
+- Event-based `Changed` connections for fast response, with polling as backup.
+- Continuous autoclicking after a whitelisted shot while XBUTTON2 is held.
+- Immediate stop when XBUTTON2 is released or the script is disabled.
 
 Load the script in Vector, whitelist players from the overlay, hold XBUTTON2 to
-arm detection, and choose the trigger/method from the `Shot Detect` menu.
+arm detection, and use the overlay's `Trigger:` button to choose
+`GunFiring + Ammo`, `GunFiring only`, or `Ammo only`.
 
-If the Vector script menu is not visible, use the overlay's `Method:` button to
-cycle methods. Click until it shows `Method: Incoming raycast` for the raycast
-shot-detection mode.
-
-The overlay also has a `Trigger:` button and a `Last:` status line. To verify
-raycast without ammo, set `Trigger: GunFiring only` and `Method: Incoming
-raycast`; the `Last:` line will show the shot source and whether the raycast
-check passed or blocked the mirrored shot.
+The `Last:` status line shows which source started the click loop. For example,
+`Last: GunFiring CLICKING` means GunFiring triggered the autoclicker.
