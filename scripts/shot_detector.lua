@@ -1,6 +1,6 @@
 -- Shot Detector | Vector Lua Engine
 -- Detects whitelisted enemy shots from GunFiring and/or ammo changes, then
--- optionally confirms line-of-sight with player raycasts or live hitbox scans.
+-- optionally confirms that the enemy's shot path can reach your player/hitboxes.
 
 local XBUTTON2       = 0x06
 local LMB_VK         = 0x01
@@ -10,7 +10,7 @@ local BURST          = 200
 local BURST_INTERVAL = 4
 local TRIGGER_DEBOUNCE_MS = 45
 
--- Hitbox groups -> recursive BasePart names to scan on each target character.
+-- Hitbox groups -> recursive BasePart names to scan on your local character.
 local HITGROUPS = {
     { name = "Head",  bones = { "Head" } },
     { name = "Torso", bones = { "UpperTorso", "LowerTorso", "Torso", "HumanoidRootPart" } },
@@ -34,13 +34,12 @@ local gf_state    = {}
 local ammo_state  = {}
 local gf_conns    = {}
 local ammo_conns  = {}
-local char_addr   = {}
-local los_ok      = {}
+local shot_path_ok = {}
 local selected    = nil
 local prev_lmb    = false
 local _armed      = false
 local _active_target = nil
-local _last_block_ms = 0
+local _last_reject_ms = 0
 local _last_trigger_ms = {}
 
 local _burst_n   = 0
@@ -56,12 +55,12 @@ menu.add_group("Shot Detect", "Settings")
 menu.add_checkbox("Shot Detect", "Settings", "sd_on", "Enable", true)
 menu.add_combo("Shot Detect", "Settings", "sd_trigger", "Normal trigger",
     { "GunFiring + Ammo", "GunFiring only", "Ammo only" }, 0)
-menu.add_combo("Shot Detect", "Settings", "sd_method", "Shot method",
-    { "Normal", "Player raycast", "Hitbox scan", "Player + hitbox" }, 0)
+menu.add_combo("Shot Detect", "Settings", "sd_method", "Shot detection",
+    { "Normal values", "Incoming raycast", "Incoming hitbox", "Raycast + hitbox" }, 0)
 menu.add_checkbox("Shot Detect", "Settings", "sd_fail_open", "Fail open if raycast unavailable", true)
 
 menu.add_group("Shot Detect", "Raycast / Hitbox")
-menu.add_checkbox("Shot Detect", "Raycast / Hitbox", "hs_draw", "Draw hitbox scan", true)
+menu.add_checkbox("Shot Detect", "Raycast / Hitbox", "hs_draw", "Draw incoming hitbox scan", true)
 menu.add_multicombo("Shot Detect", "Raycast / Hitbox", "hs_bones", "Scan hitboxes",
     { "Head", "Torso", "Arms", "Legs" }, { true, true, false, false })
 menu.add_slider_int("Shot Detect", "Raycast / Hitbox", "hs_range", "Scan range (studs)",
@@ -100,14 +99,6 @@ local function part_pos(part_ref)
     return read_prop(part_ref, "Position")
 end
 
-local function camera_pos()
-    local ok, pos = pcall(function() return camera.get_position() end)
-    if ok and pos then return pos end
-    ok, pos = pcall(function() return camera.position end)
-    if ok then return pos end
-    return nil
-end
-
 local function screen_center()
     local ok, x, y = pcall(function() return input.get_screen_center() end)
     if ok and x and y then return x, y end
@@ -141,13 +132,6 @@ end
 local function ray_visible(from_pos, to_pos)
     if not raycast or not raycast.is_visible then return nil end
     local ok, visible = pcall(function() return raycast.is_visible(from_pos, to_pos) end)
-    if ok then return visible and true or false end
-    return nil
-end
-
-local function player_visible(character_address)
-    if not character_address or not raycast or not raycast.is_player_visible then return nil end
-    local ok, visible = pcall(function() return raycast.is_player_visible(character_address) end)
     if ok then return visible and true or false end
     return nil
 end
@@ -189,6 +173,54 @@ local function enabled_bone_names()
     return names
 end
 
+local function get_player_by_name(name)
+    for _, p in ipairs(entity.get_players()) do
+        if p.name == name then return p end
+    end
+    return nil
+end
+
+local function player_position(p)
+    if not p then return nil end
+
+    local ok, pos = pcall(function() return p.head_position end)
+    if ok and pos then return pos end
+
+    ok, pos = pcall(function() return p.position end)
+    if ok and pos then return pos end
+
+    local char = nil
+    ok, char = pcall(function() return p.character end)
+    if ok and iv(char) then
+        local head = safe_find(char, "Head", true)
+        pos = part_pos(head)
+        if pos then return pos end
+
+        local root = safe_find(char, "HumanoidRootPart", true)
+        pos = part_pos(root)
+        if pos then return pos end
+    end
+
+    return nil
+end
+
+local function local_player_position()
+    return player_position(entity.get_local_player())
+end
+
+local function local_character()
+    local me = entity.get_local_player()
+    if not me then return nil end
+
+    local ok, char = pcall(function() return me.character end)
+    if ok and iv(char) then return char end
+
+    ok, char = pcall(function() return me.Character end)
+    if ok and iv(char) then return char end
+
+    return nil
+end
+
 local function distance_to_local(p, local_player)
     if not p or not local_player then return nil end
     local ok, dist = pcall(function() return p:distance_to(local_player.position) end)
@@ -196,14 +228,14 @@ local function distance_to_local(p, local_player)
     return nil
 end
 
--- Scans enabled bones, raycasts from the camera to each hitbox, and returns the
--- best visible on-screen hitpoint nearest the crosshair.
-local function hitbox_scan(char)
-    local res = { parts = {}, any_visible = false, best = nil }
+-- Scans your enabled hitboxes from the shooter's origin. This is used as shot
+-- detection confirmation: when the enemy fires, a clear ray to any local
+-- hitbox means their shot path can hit you, so the script mirrors the shot.
+local function incoming_hitbox_scan(shooter_origin)
+    local res = { parts = {}, any_hit = false, best = nil }
+    local char = local_character()
     if not iv(char) then return res end
-
-    local cam = camera_pos()
-    if not cam then return res end
+    if not shooter_origin then return res end
 
     local cx, cy = screen_center()
     local best_d = math.huge
@@ -212,15 +244,15 @@ local function hitbox_scan(char)
         local part_ref = safe_find(char, bone, true)
         local pos = part_pos(part_ref)
         if pos then
-            local visible = ray_visible(cam, pos)
-            if visible == nil then visible = fail_open() end
+            local hit = ray_visible(shooter_origin, pos)
+            if hit == nil then hit = fail_open() end
 
             local sx, sy, on = world_to_screen(pos)
-            local entry = { name = bone, pos = pos, sx = sx, sy = sy, on = on, vis = visible }
+            local entry = { name = bone, pos = pos, sx = sx, sy = sy, on = on, hit = hit }
             res.parts[#res.parts + 1] = entry
 
-            if visible then
-                res.any_visible = true
+            if hit then
+                res.any_hit = true
                 if on and sx and sy then
                     local dx = sx - cx
                     local dy = sy - cy
@@ -237,35 +269,47 @@ local function hitbox_scan(char)
     return res
 end
 
-local function los_clear(name)
+local function incoming_player_raycast(shooter_origin)
+    local target_pos = local_player_position()
+    if not shooter_origin or not target_pos then
+        if fail_open() then return true end
+        return false
+    end
+
+    local hit = ray_visible(shooter_origin, target_pos)
+    if hit == nil then return fail_open() end
+    return hit
+end
+
+local function shot_path_matches(name)
     local method = menu.get("sd_method") or 0
     if method == 0 or not name then return true end
 
+    local shooter = get_player_by_name(name)
+    local shooter_origin = player_position(shooter)
+    if not shooter_origin then return fail_open() end
+
     local checked = false
-    local clear = false
+    local matches = false
 
     if uses_player_raycast_method() then
         checked = true
-        local visible = player_visible(char_addr[name])
-        if visible == nil then
-            if fail_open() then return true end
-        elseif visible then
-            clear = true
-        end
+        matches = incoming_player_raycast(shooter_origin) or matches
     end
 
     if uses_hitbox_method() then
         checked = true
-        local visible = los_ok[name]
-        if visible == nil then
-            if fail_open() then return true end
-        elseif visible then
-            clear = true
+        local cached = shot_path_ok[name]
+        if cached == nil then
+            local scan = incoming_hitbox_scan(shooter_origin)
+            cached = scan.any_hit
+            if #scan.parts == 0 and fail_open() then cached = true end
         end
+        matches = cached or matches
     end
 
     if not checked then return true end
-    return clear
+    return matches
 end
 
 local function click()
@@ -283,8 +327,8 @@ local function start_burst(name, source)
     _last_trigger_ms[name] = t
     _active_target = name
 
-    if not los_clear(name) then
-        _last_block_ms = t
+    if not shot_path_matches(name) then
+        _last_reject_ms = t
         return
     end
 
@@ -441,8 +485,7 @@ local function clear_player(name)
     ammo_refs[name] = nil
     gf_state[name] = nil
     ammo_state[name] = nil
-    char_addr[name] = nil
-    los_ok[name] = nil
+    shot_path_ok[name] = nil
     _last_trigger_ms[name] = nil
 
     disconnect_ref(gf_conns[name])
@@ -467,21 +510,20 @@ local function update_hitboxes()
     for _, p in ipairs(entity.get_players()) do
         local name = p.name
         if not p.is_local and whitelist[name] then
-            local char = p.character
-            char_addr[name] = (iv(char) and char.address) or nil
-
-            if need_hitbox and p.is_alive and iv(char) then
+            if need_hitbox and p.is_alive then
                 local dist = distance_to_local(p, local_player)
                 local in_range = not dist or dist <= range
+                local shooter_origin = player_position(p)
 
-                if in_range then
-                    local scan = hitbox_scan(char)
-                    los_ok[name] = scan.any_visible
+                if in_range and shooter_origin then
+                    local scan = incoming_hitbox_scan(shooter_origin)
+                    shot_path_ok[name] = scan.any_hit
+                    if #scan.parts == 0 and fail_open() then shot_path_ok[name] = nil end
 
                     if draw_scan then
                         for _, entry in ipairs(scan.parts) do
                             if entry.on and entry.sx and entry.sy then
-                                local color = entry.vis and { 0.2, 1, 0.45, 0.9 } or { 1, 0.3, 0.3, 0.8 }
+                                local color = entry.hit and { 0.2, 1, 0.45, 0.9 } or { 1, 0.3, 0.3, 0.8 }
                                 draw.circle_filled(entry.sx, entry.sy, 3, color)
                             end
                         end
@@ -493,10 +535,10 @@ local function update_hitboxes()
                         end
                     end
                 else
-                    los_ok[name] = nil
+                    shot_path_ok[name] = nil
                 end
             else
-                los_ok[name] = nil
+                shot_path_ok[name] = nil
             end
         end
     end
@@ -522,7 +564,7 @@ local function draw_panel()
     for _ in pairs(whitelist) do wl_n = wl_n + 1 end
 
     local method = menu.get("sd_method") or 0
-    local method_names = { "Normal", "Player RC", "Hitbox", "RC + Hitbox" }
+    local method_names = { "Normal", "Incoming RC", "Incoming HB", "RC + HB" }
     local title = "Shot Detect " .. (method_names[method + 1] or "Normal")
     if _armed then
         title = title .. " [ARMED]"
@@ -544,9 +586,9 @@ local function draw_panel()
             wl and { 0.08, 0.42, 0.12, 0.32 } or
             hover and { 1, 1, 1, 0.08 } or { 0, 0, 0, 0 })
 
-        local los = wl and los_clear(p.name)
+        local shot_path = wl and shot_path_matches(p.name)
         draw.circle_filled(px + 11, ry + row_h / 2, 4,
-            wl and (los and { 0.2, 1, 0.45, 1 } or { 1, 0.55, 0.2, 1 }) or { 0.4, 0.4, 0.4, 0.55 })
+            wl and (shot_path and { 0.2, 1, 0.45, 1 } or { 1, 0.55, 0.2, 1 }) or { 0.4, 0.4, 0.4, 0.55 })
 
         local label = p.name
         if wl and ammo_cache[p.name] ~= nil then
@@ -587,8 +629,7 @@ local function draw_panel()
             ammo_refs[selected] = nil
             gf_state[selected] = nil
             ammo_state[selected] = nil
-            los_ok[selected] = nil
-            char_addr[selected] = nil
+            shot_path_ok[selected] = nil
             cold_refresh()
         end
     end

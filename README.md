@@ -6,8 +6,9 @@
 detection. It supports:
 
 - Normal shot triggers from `GunFiring`, ammo changes, or both.
-- Optional player raycast confirmation before firing.
-- Optional live hitbox scanning/raycast confirmation before firing.
+- Optional incoming raycast confirmation from the shooter to your player.
+- Optional incoming hitbox scanning/raycast confirmation from the shooter to
+  your enabled hitboxes.
 - Hitbox scan drawing for Head, Torso, Arms, and Legs groups.
 
 Load the script in Vector, whitelist players from the overlay, hold XBUTTON2 to
