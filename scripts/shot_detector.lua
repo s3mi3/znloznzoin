@@ -42,6 +42,9 @@ local _active_target = nil
 local _last_reject_ms = 0
 local _last_trigger_ms = {}
 local _method_override = nil
+local _trigger_override = nil
+local _last_event_text = "Last: none"
+local _last_event_color = { 0.75, 0.82, 1, 0.9 }
 
 local _burst_n   = 0
 local _do_click  = false
@@ -137,13 +140,27 @@ local function ray_visible(from_pos, to_pos)
     return nil
 end
 
+local function current_trigger()
+    if _trigger_override ~= nil then return _trigger_override end
+    return menu.get("sd_trigger") or 0
+end
+
+local function set_trigger(mode)
+    _trigger_override = mode
+    pcall(function() menu.set("sd_trigger", mode) end)
+end
+
+local function cycle_trigger()
+    set_trigger((current_trigger() + 1) % 3)
+end
+
 local function use_gunfiring()
-    local mode = menu.get("sd_trigger") or 0
+    local mode = current_trigger()
     return mode == 0 or mode == 1
 end
 
 local function use_ammo()
-    local mode = menu.get("sd_trigger") or 0
+    local mode = current_trigger()
     return mode == 0 or mode == 2
 end
 
@@ -159,6 +176,34 @@ end
 
 local function cycle_method()
     set_method((current_method() + 1) % 4)
+end
+
+local function method_name()
+    local names = { "Normal values", "Incoming raycast", "Incoming hitbox", "Raycast + hitbox" }
+    return names[current_method() + 1] or "Normal values"
+end
+
+local function short_method_name()
+    local names = { "Normal", "Incoming RC", "Incoming HB", "RC + HB" }
+    return names[current_method() + 1] or "Normal"
+end
+
+local function trigger_name()
+    local names = { "GunFiring + Ammo", "GunFiring only", "Ammo only" }
+    return names[current_trigger() + 1] or "GunFiring + Ammo"
+end
+
+local function record_event(name, source, status)
+    _last_event_text = "Last: " .. source .. " -> " .. short_method_name() .. " " .. status
+    if name then _last_event_text = _last_event_text .. " (" .. name .. ")" end
+
+    if status == "PASS" then
+        _last_event_color = { 0.2, 1, 0.45, 1 }
+    elseif status == "BLOCK" then
+        _last_event_color = { 1, 0.55, 0.2, 1 }
+    else
+        _last_event_color = { 0.65, 0.7, 0.8, 1 }
+    end
 end
 
 local function uses_hitbox_method()
@@ -334,7 +379,10 @@ local function click()
 end
 
 local function start_burst(name, source)
-    if not _armed then return end
+    if not _armed then
+        record_event(name, source, "UNARMED")
+        return
+    end
 
     local t = now_ms()
     local last = _last_trigger_ms[name] or 0
@@ -344,11 +392,14 @@ local function start_burst(name, source)
 
     if not shot_path_matches(name) then
         _last_reject_ms = t
+        record_event(name, source, "BLOCK")
+        print("[ShotDetect] " .. name .. " shot via " .. source .. " blocked by " .. method_name())
         return
     end
 
     _burst_n = BURST
     _do_click = true
+    record_event(name, source, "PASS")
     print("[ShotDetect] " .. name .. " shot detected via " .. source)
 
     if _click_thd then
@@ -563,6 +614,8 @@ local function draw_panel()
     local px, py, pw = 14, 14, 232
     local row_h, hdr_h, btn_h, gap = 22, 26, 24, 4
     local method_h = 24
+    local trigger_h = 24
+    local status_h = 18
     local list = {}
 
     for _, p in ipairs(entity.get_players()) do
@@ -571,7 +624,7 @@ local function draw_panel()
         end
     end
 
-    local panel_h = hdr_h + #list * row_h + gap + btn_h + gap + method_h + 4
+    local panel_h = hdr_h + #list * row_h + gap + btn_h + gap + method_h + gap + trigger_h + status_h + 6
     draw.rect_filled(px, py, pw, panel_h, { 0.04, 0.04, 0.09, 0.9 }, 5)
     draw.rect(px, py, pw, panel_h, { 0.28, 0.52, 1, 0.7 }, 5)
     draw.rect_filled(px, py, pw, hdr_h, { 0.1, 0.22, 0.52, 0.95 }, 5)
@@ -579,9 +632,7 @@ local function draw_panel()
     local wl_n = 0
     for _ in pairs(whitelist) do wl_n = wl_n + 1 end
 
-    local method = current_method()
-    local method_names = { "Normal", "Incoming RC", "Incoming HB", "RC + HB" }
-    local title = "Shot Detect " .. (method_names[method + 1] or "Normal")
+    local title = "Shot Detect " .. short_method_name()
     if _armed then
         title = title .. " [ARMED]"
     else
@@ -652,8 +703,7 @@ local function draw_panel()
 
     local method_y = btn_y + btn_h + gap
     local hover_method = mx >= bx and mx <= bx + bw and my >= method_y and my <= method_y + method_h
-    local full_method_names = { "Normal values", "Incoming raycast", "Incoming hitbox", "Raycast + hitbox" }
-    local method_label = "Method: " .. (full_method_names[current_method() + 1] or "Normal values")
+    local method_label = "Method: " .. method_name()
     local method_color = hover_method and { 0.25, 0.6, 1, 0.95 } or { 0.12, 0.26, 0.55, 0.9 }
 
     draw.rect_filled(bx, method_y, bw, method_h, method_color, 4)
@@ -664,6 +714,23 @@ local function draw_panel()
     if hover_method and clicked then
         cycle_method()
     end
+
+    local trigger_y = method_y + method_h + gap
+    local hover_trigger = mx >= bx and mx <= bx + bw and my >= trigger_y and my <= trigger_y + trigger_h
+    local trigger_label = "Trigger: " .. trigger_name()
+    local trigger_color = hover_trigger and { 0.25, 0.6, 1, 0.95 } or { 0.11, 0.22, 0.42, 0.9 }
+
+    draw.rect_filled(bx, trigger_y, bw, trigger_h, trigger_color, 4)
+    draw.rect(bx, trigger_y, bw, trigger_h, { 0.45, 0.7, 1, 0.55 }, 4)
+    local gtw, gth = draw.get_text_size(trigger_label, 12)
+    draw.text(bx + bw / 2 - gtw / 2, trigger_y + trigger_h / 2 - gth / 2, trigger_label, { 1, 1, 1, 1 }, 12)
+
+    if hover_trigger and clicked then
+        cycle_trigger()
+    end
+
+    local status_y = trigger_y + trigger_h + 3
+    draw.text(bx + 2, status_y + 3, _last_event_text, _last_event_color, 11)
 
     prev_lmb = lmb_now
 end

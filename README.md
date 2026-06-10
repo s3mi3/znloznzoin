@@ -17,3 +17,8 @@ arm detection, and choose the trigger/method from the `Shot Detect` menu.
 If the Vector script menu is not visible, use the overlay's `Method:` button to
 cycle methods. Click until it shows `Method: Incoming raycast` for the raycast
 shot-detection mode.
+
+The overlay also has a `Trigger:` button and a `Last:` status line. To verify
+raycast without ammo, set `Trigger: GunFiring only` and `Method: Incoming
+raycast`; the `Last:` line will show the shot source and whether the raycast
+check passed or blocked the mirrored shot.
