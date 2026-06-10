@@ -41,6 +41,7 @@ local _armed      = false
 local _active_target = nil
 local _last_reject_ms = 0
 local _last_trigger_ms = {}
+local _method_override = nil
 
 local _burst_n   = 0
 local _do_click  = false
@@ -146,13 +147,27 @@ local function use_ammo()
     return mode == 0 or mode == 2
 end
 
+local function current_method()
+    if _method_override ~= nil then return _method_override end
+    return menu.get("sd_method") or 0
+end
+
+local function set_method(mode)
+    _method_override = mode
+    pcall(function() menu.set("sd_method", mode) end)
+end
+
+local function cycle_method()
+    set_method((current_method() + 1) % 4)
+end
+
 local function uses_hitbox_method()
-    local mode = menu.get("sd_method") or 0
+    local mode = current_method()
     return mode == 2 or mode == 3
 end
 
 local function uses_player_raycast_method()
-    local mode = menu.get("sd_method") or 0
+    local mode = current_method()
     return mode == 1 or mode == 3
 end
 
@@ -282,7 +297,7 @@ local function incoming_player_raycast(shooter_origin)
 end
 
 local function shot_path_matches(name)
-    local method = menu.get("sd_method") or 0
+    local method = current_method()
     if method == 0 or not name then return true end
 
     local shooter = get_player_by_name(name)
@@ -547,6 +562,7 @@ end
 local function draw_panel()
     local px, py, pw = 14, 14, 232
     local row_h, hdr_h, btn_h, gap = 22, 26, 24, 4
+    local method_h = 24
     local list = {}
 
     for _, p in ipairs(entity.get_players()) do
@@ -555,7 +571,7 @@ local function draw_panel()
         end
     end
 
-    local panel_h = hdr_h + #list * row_h + gap + btn_h + 4
+    local panel_h = hdr_h + #list * row_h + gap + btn_h + gap + method_h + 4
     draw.rect_filled(px, py, pw, panel_h, { 0.04, 0.04, 0.09, 0.9 }, 5)
     draw.rect(px, py, pw, panel_h, { 0.28, 0.52, 1, 0.7 }, 5)
     draw.rect_filled(px, py, pw, hdr_h, { 0.1, 0.22, 0.52, 0.95 }, 5)
@@ -563,7 +579,7 @@ local function draw_panel()
     local wl_n = 0
     for _ in pairs(whitelist) do wl_n = wl_n + 1 end
 
-    local method = menu.get("sd_method") or 0
+    local method = current_method()
     local method_names = { "Normal", "Incoming RC", "Incoming HB", "RC + HB" }
     local title = "Shot Detect " .. (method_names[method + 1] or "Normal")
     if _armed then
@@ -632,6 +648,21 @@ local function draw_panel()
             shot_path_ok[selected] = nil
             cold_refresh()
         end
+    end
+
+    local method_y = btn_y + btn_h + gap
+    local hover_method = mx >= bx and mx <= bx + bw and my >= method_y and my <= method_y + method_h
+    local full_method_names = { "Normal values", "Incoming raycast", "Incoming hitbox", "Raycast + hitbox" }
+    local method_label = "Method: " .. (full_method_names[current_method() + 1] or "Normal values")
+    local method_color = hover_method and { 0.25, 0.6, 1, 0.95 } or { 0.12, 0.26, 0.55, 0.9 }
+
+    draw.rect_filled(bx, method_y, bw, method_h, method_color, 4)
+    draw.rect(bx, method_y, bw, method_h, { 0.45, 0.7, 1, 0.55 }, 4)
+    local mtw, mth = draw.get_text_size(method_label, 12)
+    draw.text(bx + bw / 2 - mtw / 2, method_y + method_h / 2 - mth / 2, method_label, { 1, 1, 1, 1 }, 12)
+
+    if hover_method and clicked then
+        cycle_method()
     end
 
     prev_lmb = lmb_now

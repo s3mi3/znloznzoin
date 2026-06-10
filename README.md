@@ -13,3 +13,7 @@ detection. It supports:
 
 Load the script in Vector, whitelist players from the overlay, hold XBUTTON2 to
 arm detection, and choose the trigger/method from the `Shot Detect` menu.
+
+If the Vector script menu is not visible, use the overlay's `Method:` button to
+cycle methods. Click until it shows `Method: Incoming raycast` for the raycast
+shot-detection mode.
