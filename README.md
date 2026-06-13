@@ -18,5 +18,8 @@ arm detection, and use the overlay's `Trigger:` button to choose
 Use the overlay's `First delay:` slider to delay the first click after a shot is
 detected. Leave it at `0ms` for instant clicking.
 
+Press F8 to hide or show the overlay. Shot detection and clicking keep running
+while the overlay is hidden.
+
 The `Last:` status line shows which source started the click loop. For example,
 `Last: GunFiring CLICKING` means GunFiring triggered the autoclicker.

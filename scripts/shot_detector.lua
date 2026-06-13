@@ -6,6 +6,7 @@
 
 local XBUTTON2 = 0x06
 local LMB_VK   = 0x01
+local F8_VK    = 0x77
 
 local GUN_NAME  = "[Double-Barrel SG]"
 local AMMO_NAME = "Ammo"
@@ -31,6 +32,8 @@ local prev_lmb = false
 
 local _enabled = true
 local _armed = false
+local _gui_hidden = false
+local _prev_hide_key = false
 local _trigger_mode = 0
 local _first_delay = 0
 local _use_gunfiring = true
@@ -129,6 +132,14 @@ local function refresh_config()
     if _delay_override == nil then
         _first_delay = clamp_delay(menu.get("sd_first_delay") or 0)
     end
+end
+
+local function update_gui_toggle()
+    local hide_key = input.is_key_down(F8_VK)
+    if hide_key and not _prev_hide_key then
+        _gui_hidden = not _gui_hidden
+    end
+    _prev_hide_key = hide_key
 end
 
 local function current_trigger()
@@ -599,7 +610,12 @@ function on_frame()
     process_pending_click()
     click_tick()
 
-    if enabled() then draw_panel() end
+    update_gui_toggle()
+    if enabled() and not _gui_hidden then
+        draw_panel()
+    else
+        prev_lmb = input.is_key_down(LMB_VK)
+    end
 end
 
 print("[ShotDetect] Loaded. Fast GunFiring/Ammo detector ready")
