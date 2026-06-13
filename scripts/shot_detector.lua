@@ -9,6 +9,7 @@ local LMB_VK   = 0x01
 
 local GUN_NAME  = "[Double-Barrel SG]"
 local AMMO_NAME = "Ammo"
+local TRIGGER_NAMES = { "GunFiring + Ammo", "GunFiring only", "Ammo only" }
 
 local CLICK_INTERVAL_MS = 1
 local CLICKS_PER_TICK   = 1
@@ -16,6 +17,7 @@ local TRIGGER_DEBOUNCE_MS = 35
 local FIRST_CLICK_DELAY_MAX_MS = 500
 
 local whitelist  = {}
+local whitelist_count = 0
 local ammo_cache = {}
 local ammo_refs  = {}
 local gf_refs    = {}
@@ -27,7 +29,12 @@ local ammo_conns = {}
 local selected = nil
 local prev_lmb = false
 
+local _enabled = true
 local _armed = false
+local _trigger_mode = 0
+local _first_delay = 0
+local _use_gunfiring = true
+local _use_ammo = true
 local _clicking = false
 local _click_thread = nil
 local _poll_thread = nil
@@ -44,6 +51,16 @@ local _last_event_text = "Last: none"
 local _last_event_color = { 0.75, 0.82, 1, 0.9 }
 local _click_impl = nil
 
+if input.simulate_mouse_click then
+    local simulate_mouse_click = input.simulate_mouse_click
+    _click_impl = function() simulate_mouse_click(0) end
+elseif utility.mouse_click then
+    local mouse_click = utility.mouse_click
+    _click_impl = function() mouse_click() end
+else
+    _click_impl = function() end
+end
+
 menu.add_tab("Shot Detect", "S")
 menu.add_group("Shot Detect", "Settings")
 menu.add_checkbox("Shot Detect", "Settings", "sd_on", "Enable", true)
@@ -57,11 +74,11 @@ local function now_ms()
 end
 
 local function enabled()
-    return menu.get("sd_on") == true
+    return _enabled
 end
 
 local function armed()
-    return enabled() and input.is_key_down(XBUTTON2)
+    return _enabled and input.is_key_down(XBUTTON2)
 end
 
 local function iv(o)
@@ -96,13 +113,31 @@ local function clamp_delay(value)
     return math.floor(value + 0.5)
 end
 
+local function apply_trigger_mode(mode)
+    _trigger_mode = mode or 0
+    _use_gunfiring = _trigger_mode == 0 or _trigger_mode == 1
+    _use_ammo = _trigger_mode == 0 or _trigger_mode == 2
+end
+
+local function refresh_config()
+    _enabled = menu.get("sd_on") == true
+
+    if _trigger_override == nil then
+        apply_trigger_mode(menu.get("sd_trigger") or 0)
+    end
+
+    if _delay_override == nil then
+        _first_delay = clamp_delay(menu.get("sd_first_delay") or 0)
+    end
+end
+
 local function current_trigger()
-    if _trigger_override ~= nil then return _trigger_override end
-    return menu.get("sd_trigger") or 0
+    return _trigger_mode
 end
 
 local function set_trigger(mode)
     _trigger_override = mode
+    apply_trigger_mode(mode)
     pcall(function() menu.set("sd_trigger", mode) end)
 end
 
@@ -111,28 +146,25 @@ local function cycle_trigger()
 end
 
 local function trigger_name()
-    local names = { "GunFiring + Ammo", "GunFiring only", "Ammo only" }
-    return names[current_trigger() + 1] or "GunFiring + Ammo"
+    return TRIGGER_NAMES[current_trigger() + 1] or TRIGGER_NAMES[1]
 end
 
 local function current_first_delay()
-    if _delay_override ~= nil then return _delay_override end
-    return clamp_delay(menu.get("sd_first_delay") or 0)
+    return _first_delay
 end
 
 local function set_first_delay(value)
     _delay_override = clamp_delay(value)
+    _first_delay = _delay_override
     pcall(function() menu.set("sd_first_delay", _delay_override) end)
 end
 
 local function use_gunfiring()
-    local mode = current_trigger()
-    return mode == 0 or mode == 1
+    return _use_gunfiring
 end
 
 local function use_ammo()
-    local mode = current_trigger()
-    return mode == 0 or mode == 2
+    return _use_ammo
 end
 
 local function record_event(name, source, status)
@@ -151,25 +183,12 @@ local function record_event(name, source, status)
 end
 
 local function click_once()
-    if _click_impl then
-        _click_impl()
-        return
-    end
-
-    if pcall(function() input.simulate_mouse_click(0) end) then
-        _click_impl = function() input.simulate_mouse_click(0) end
-    else
-        if pcall(function() utility.mouse_click() end) then
-            _click_impl = function() utility.mouse_click() end
-        else
-            _click_impl = function() end
-        end
-    end
+    _click_impl()
 end
 
 local function click_tick()
     if not _clicking then return end
-    if not armed() then
+    if not _enabled or not input.is_key_down(XBUTTON2) then
         _clicking = false
         return
     end
@@ -194,6 +213,8 @@ local function begin_clicking(name, source)
 end
 
 local function stop_clicking()
+    if not _clicking and not _pending_click and not _click_thread then return end
+
     _clicking = false
     _pending_click = false
     _pending_name = nil
@@ -346,6 +367,8 @@ local function find_ammo(plr, name)
 end
 
 local function poll_refs()
+    if whitelist_count == 0 then return end
+
     for name in pairs(whitelist) do
         local gf_ref = gf_refs[name]
         if gf_ref and iv(gf_ref) then
@@ -362,6 +385,8 @@ local function poll_refs()
 end
 
 local function refresh_refs()
+    if whitelist_count == 0 then return end
+
     _cold_tick = _cold_tick + 1
 
     local players_service = game.players
@@ -388,6 +413,10 @@ local function refresh_refs()
 end
 
 local function clear_player(name)
+    if whitelist[name] then
+        whitelist_count = whitelist_count - 1
+    end
+
     whitelist[name] = nil
     ammo_cache[name] = nil
     ammo_refs[name] = nil
@@ -425,16 +454,13 @@ local function draw_panel()
     draw.rect(px, py, pw, panel_h, { 0.28, 0.52, 1, 0.7 }, 5)
     draw.rect_filled(px, py, pw, hdr_h, { 0.1, 0.22, 0.52, 0.95 }, 5)
 
-    local wl_n = 0
-    for _ in pairs(whitelist) do wl_n = wl_n + 1 end
-
     local title = "Shot Detect"
     if _clicking then
         title = title .. " [CLICKING]"
     elseif _armed then
         title = title .. " [ARMED]"
     else
-        title = title .. " [" .. wl_n .. " wl]"
+        title = title .. " [" .. whitelist_count .. " wl]"
     end
     draw.text(px + 8, py + 6, title,
         _clicking and { 1, 0.95, 0.25, 1 } or _armed and { 0.2, 1, 0.45, 1 } or { 0.7, 0.9, 1, 1 }, 13)
@@ -492,6 +518,9 @@ local function draw_panel()
         if whitelist[selected] then
             clear_player(selected)
         else
+            if not whitelist[selected] then
+                whitelist_count = whitelist_count + 1
+            end
             whitelist[selected] = true
             gf_refs[selected] = nil
             ammo_refs[selected] = nil
@@ -550,6 +579,7 @@ local function draw_panel()
 end
 
 function on_pre_frame()
+    refresh_config()
     _armed = armed()
     if not _armed then stop_clicking() end
     poll_refs()
@@ -561,6 +591,7 @@ function on_frame()
     if not _poll_thread then _poll_thread = thread.create(poll_refs, 5) end
     if not _cold_thread then _cold_thread = thread.create(refresh_refs, 100) end
 
+    refresh_config()
     _armed = armed()
     if not _armed then stop_clicking() end
 
