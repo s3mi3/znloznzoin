@@ -1,7 +1,8 @@
 -- Shot Detector | Vector Lua Engine
 -- Fast GunFiring/Ammo detector for whitelisted players.
--- When a shot is detected while XBUTTON2 is held, the script clicks immediately
--- and keeps clicking as fast as the engine allows until the hotkey is released.
+-- When a shot is detected while XBUTTON2 is held, the script waits for the
+-- configured first-click delay (default 0ms), then clicks continuously until
+-- the hotkey is released.
 
 local XBUTTON2 = 0x06
 local LMB_VK   = 0x01
@@ -12,6 +13,7 @@ local AMMO_NAME = "Ammo"
 local CLICK_INTERVAL_MS = 1
 local CLICKS_PER_TICK   = 1
 local TRIGGER_DEBOUNCE_MS = 35
+local FIRST_CLICK_DELAY_MAX_MS = 500
 
 local whitelist  = {}
 local ammo_cache = {}
@@ -33,6 +35,11 @@ local _cold_thread = nil
 local _cold_tick = 0
 local _last_trigger_ms = {}
 local _trigger_override = nil
+local _delay_override = nil
+local _pending_click = false
+local _pending_name = nil
+local _pending_source = nil
+local _pending_due_ms = 0
 local _last_event_text = "Last: none"
 local _last_event_color = { 0.75, 0.82, 1, 0.9 }
 local _click_impl = nil
@@ -42,6 +49,8 @@ menu.add_group("Shot Detect", "Settings")
 menu.add_checkbox("Shot Detect", "Settings", "sd_on", "Enable", true)
 menu.add_combo("Shot Detect", "Settings", "sd_trigger", "Trigger",
     { "GunFiring + Ammo", "GunFiring only", "Ammo only" }, 0)
+menu.add_slider_int("Shot Detect", "Settings", "sd_first_delay", "First click delay (ms)",
+    0, FIRST_CLICK_DELAY_MAX_MS, 0)
 
 local function now_ms()
     return os.clock() * 1000
@@ -80,6 +89,13 @@ local function read_prop(o, prop)
     return nil
 end
 
+local function clamp_delay(value)
+    value = tonumber(value) or 0
+    if value < 0 then return 0 end
+    if value > FIRST_CLICK_DELAY_MAX_MS then return FIRST_CLICK_DELAY_MAX_MS end
+    return math.floor(value + 0.5)
+end
+
 local function current_trigger()
     if _trigger_override ~= nil then return _trigger_override end
     return menu.get("sd_trigger") or 0
@@ -99,6 +115,16 @@ local function trigger_name()
     return names[current_trigger() + 1] or "GunFiring + Ammo"
 end
 
+local function current_first_delay()
+    if _delay_override ~= nil then return _delay_override end
+    return clamp_delay(menu.get("sd_first_delay") or 0)
+end
+
+local function set_first_delay(value)
+    _delay_override = clamp_delay(value)
+    pcall(function() menu.set("sd_first_delay", _delay_override) end)
+end
+
 local function use_gunfiring()
     local mode = current_trigger()
     return mode == 0 or mode == 1
@@ -115,6 +141,8 @@ local function record_event(name, source, status)
 
     if status == "CLICKING" then
         _last_event_color = { 0.2, 1, 0.45, 1 }
+    elseif string.sub(status, 1, 5) == "DELAY" then
+        _last_event_color = { 1, 0.95, 0.25, 1 }
     elseif status == "UNARMED" or status == "OFF" then
         _last_event_color = { 1, 0.55, 0.2, 1 }
     else
@@ -158,8 +186,18 @@ local function ensure_click_thread()
     end, CLICK_INTERVAL_MS)
 end
 
+local function begin_clicking(name, source)
+    _clicking = true
+    record_event(name, source, "CLICKING")
+    click_once() -- fire immediately when the configured delay expires.
+    ensure_click_thread()
+end
+
 local function stop_clicking()
     _clicking = false
+    _pending_click = false
+    _pending_name = nil
+    _pending_source = nil
     if _click_thread then
         thread.stop(_click_thread)
         _click_thread = nil
@@ -181,10 +219,37 @@ local function start_clicking(name, source)
     if t - last < TRIGGER_DEBOUNCE_MS then return end
     _last_trigger_ms[name] = t
 
-    _clicking = true
-    record_event(name, source, "CLICKING")
-    click_once() -- fire immediately on the detection frame.
-    ensure_click_thread()
+    local delay = current_first_delay()
+    if delay <= 0 then
+        begin_clicking(name, source)
+        return
+    end
+
+    _pending_click = true
+    _pending_name = name
+    _pending_source = source
+    _pending_due_ms = t + delay
+    record_event(name, source, "DELAY " .. delay .. "ms")
+end
+
+local function process_pending_click()
+    if not _pending_click then return end
+
+    if not armed() then
+        _pending_click = false
+        _pending_name = nil
+        _pending_source = nil
+        return
+    end
+
+    if now_ms() < _pending_due_ms then return end
+
+    local name = _pending_name
+    local source = _pending_source
+    _pending_click = false
+    _pending_name = nil
+    _pending_source = nil
+    begin_clicking(name, source)
 end
 
 local function handle_gunfiring(name, value)
@@ -346,7 +411,7 @@ end
 local function draw_panel()
     local px, py, pw = 14, 14, 232
     local row_h, hdr_h, btn_h, gap = 22, 26, 24, 4
-    local trigger_h, status_h = 24, 18
+    local trigger_h, delay_h, status_h = 24, 26, 18
     local list = {}
 
     for _, player in ipairs(entity.get_players()) do
@@ -355,7 +420,7 @@ local function draw_panel()
         end
     end
 
-    local panel_h = hdr_h + #list * row_h + gap + btn_h + gap + trigger_h + status_h + 6
+    local panel_h = hdr_h + #list * row_h + gap + btn_h + gap + trigger_h + gap + delay_h + status_h + 6
     draw.rect_filled(px, py, pw, panel_h, { 0.04, 0.04, 0.09, 0.9 }, 5)
     draw.rect(px, py, pw, panel_h, { 0.28, 0.52, 1, 0.7 }, 5)
     draw.rect_filled(px, py, pw, hdr_h, { 0.1, 0.22, 0.52, 0.95 }, 5)
@@ -450,7 +515,35 @@ local function draw_panel()
         cycle_trigger()
     end
 
-    local status_y = trigger_y + trigger_h + 3
+    local delay_y = trigger_y + trigger_h + gap
+    local hover_delay = mx >= bx and mx <= bx + bw and my >= delay_y and my <= delay_y + delay_h
+    local delay = current_first_delay()
+    local delay_label = "First delay: " .. delay .. "ms"
+    local delay_color = hover_delay and { 0.25, 0.6, 1, 0.95 } or { 0.09, 0.18, 0.36, 0.9 }
+
+    draw.rect_filled(bx, delay_y, bw, delay_h, delay_color, 4)
+    draw.rect(bx, delay_y, bw, delay_h, { 0.45, 0.7, 1, 0.55 }, 4)
+
+    local bar_x = bx + 8
+    local bar_y = delay_y + delay_h - 8
+    local bar_w = bw - 16
+    local fill_w = bar_w * delay / FIRST_CLICK_DELAY_MAX_MS
+    draw.rect_filled(bar_x, bar_y, bar_w, 3, { 0.02, 0.05, 0.1, 0.9 }, 2)
+    if fill_w > 0 then
+        draw.rect_filled(bar_x, bar_y, fill_w, 3, { 0.25, 0.75, 1, 1 }, 2)
+    end
+
+    local dtw, dth = draw.get_text_size(delay_label, 11)
+    draw.text(bx + bw / 2 - dtw / 2, delay_y + 4, delay_label, { 1, 1, 1, 1 }, 11)
+
+    if hover_delay and lmb_now then
+        local ratio = (mx - bar_x) / bar_w
+        if ratio < 0 then ratio = 0 end
+        if ratio > 1 then ratio = 1 end
+        set_first_delay(ratio * FIRST_CLICK_DELAY_MAX_MS)
+    end
+
+    local status_y = delay_y + delay_h + 3
     draw.text(bx + 2, status_y + 3, _last_event_text, _last_event_color, 11)
 
     prev_lmb = lmb_now
@@ -460,6 +553,7 @@ function on_pre_frame()
     _armed = armed()
     if not _armed then stop_clicking() end
     poll_refs()
+    process_pending_click()
     click_tick()
 end
 
@@ -471,6 +565,7 @@ function on_frame()
     if not _armed then stop_clicking() end
 
     poll_refs()
+    process_pending_click()
     click_tick()
 
     if enabled() then draw_panel() end
