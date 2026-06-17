@@ -51,6 +51,12 @@ _G.PingSpoofDebug   = _G.PingSpoofDebug == nil and true or _G.PingSpoofDebug
 
 ------------------------------------------------------------
 -- SPOOFING ENGINE
+--
+-- The displayed value only changes when the REAL ping changes (or when
+-- the user changes the mode / extra / jitter / fixed value). This keeps
+-- the spoofed number perfectly in sync with the actual cadence of your
+-- connection (real ping in Roblox refreshes ~once per second), so the
+-- HUD looks completely natural.
 ------------------------------------------------------------
 local function getRealPing()
     local ok, value = pcall(function()
@@ -60,28 +66,63 @@ local function getRealPing()
     return 0
 end
 
-local jitterSeed = math.random() * 1000
-local function smoothJitter(amount)
-    if amount <= 0 then return 0 end
-    local t = (tick() + jitterSeed) * DRIFT_SPEED
-    local wave  = math.sin(t) * 0.6 + math.sin(t * 2.3 + 1.7) * 0.4
-    local nudge = (math.random() - 0.5) * 0.4
-    return math.floor((wave + nudge) * amount + 0.5)
+-- Cached "currently shown" value plus the inputs it was computed from.
+-- A new sample is only produced when the real ping (rounded to int) or
+-- any config knob actually changes.
+local cachedDisplayed = 0
+local lastRealInt     = nil
+local lastMode        = nil
+local lastExtra       = nil
+local lastFixed       = nil
+local lastJitter      = nil
+local lastJitterSample = 0
+
+local function recomputeIfChanged(force)
+    local mode    = _G.PingSpoofMode   or MODE
+    local extra   = _G.PingSpoofExtra  or EXTRA_PING
+    local fixed   = _G.PingSpoofFixed  or FAKE_PING
+    local jitter  = _G.PingSpoofJitter or JITTER
+    local realInt = math.floor(getRealPing() + 0.5)
+
+    local changed = force
+        or realInt ~= lastRealInt
+        or mode    ~= lastMode
+        or extra   ~= lastExtra
+        or fixed   ~= lastFixed
+        or jitter  ~= lastJitter
+
+    if not changed then return false end
+
+    -- Resample jitter only at the moment the real ping (or config) changes.
+    if jitter > 0 then
+        lastJitterSample = math.random(-jitter, jitter)
+    else
+        lastJitterSample = 0
+    end
+
+    local base
+    if mode == "fixed" then
+        base = fixed
+    else
+        base = realInt + extra
+    end
+
+    cachedDisplayed = math.max(1, base + lastJitterSample)
+    lastRealInt = realInt
+    lastMode    = mode
+    lastExtra   = extra
+    lastFixed   = fixed
+    lastJitter  = jitter
+    return true
 end
 
 local function computeDisplayedPing()
-    local mode   = _G.PingSpoofMode or MODE
-    local jitter = smoothJitter(_G.PingSpoofJitter or JITTER)
-    local base
-    if mode == "fixed" then
-        base = _G.PingSpoofFixed or FAKE_PING
-    else
-        base = getRealPing() + (_G.PingSpoofExtra or EXTRA_PING)
-    end
-    return math.max(1, math.floor(base + jitter + 0.5))
+    return cachedDisplayed
 end
 
-local function buildText() return tostring(computeDisplayedPing()) .. SUFFIX end
+local function buildText() return tostring(cachedDisplayed) .. SUFFIX end
+
+recomputeIfChanged(true)
 
 local function isPingLabel(inst)
     if not (inst:IsA("TextLabel") or inst:IsA("TextButton")) then return false end
@@ -156,18 +197,26 @@ end
 watchDescendants(PlayerGui)
 watchDescendants(CoreGui)
 
-local refreshAccum, rescanAccum = 0, 0
-RunService.RenderStepped:Connect(function(dt)
-    refreshAccum = refreshAccum + dt
-    if refreshAccum >= UPDATE_INTERVAL then
-        refreshAccum = 0
-        if _G.PingSpoofEnabled then
-            local desired = buildText()
-            for label in pairs(hooked) do
-                if label and label.Parent and label.Text ~= desired then
-                    label.Text = desired
-                end
-            end
+local function pushToLabels()
+    if not _G.PingSpoofEnabled then return end
+    local desired = buildText()
+    for label in pairs(hooked) do
+        if label and label.Parent and label.Text ~= desired then
+            label.Text = desired
+        end
+    end
+end
+
+-- Poll cadence: we check real ping ~5 Hz, but only WRITE to labels when
+-- the displayed value actually changes. So in practice the HUD text only
+-- updates at the same rate as your real ping (≈1 Hz).
+local pollAccum, rescanAccum = 0, 0
+RunService.Heartbeat:Connect(function(dt)
+    pollAccum = pollAccum + dt
+    if pollAccum >= UPDATE_INTERVAL then
+        pollAccum = 0
+        if recomputeIfChanged(false) then
+            pushToLabels()
         end
     end
     rescanAccum = rescanAccum + dt
@@ -418,8 +467,21 @@ local function refreshModeButtons()
     addBtn.TextColor3   = mode == "add"   and Color3.new(0, 0, 0) or THEME.text
     fixedBtn.TextColor3 = mode == "fixed" and Color3.new(0, 0, 0) or THEME.text
 end
-addBtn.MouseButton1Click:Connect(function()  _G.PingSpoofMode = "add";   refreshModeButtons() end)
-fixedBtn.MouseButton1Click:Connect(function() _G.PingSpoofMode = "fixed"; refreshModeButtons() end)
+local function applyChange()
+    recomputeIfChanged(true)
+    pushToLabels()
+end
+
+addBtn.MouseButton1Click:Connect(function()
+    _G.PingSpoofMode = "add"
+    refreshModeButtons()
+    applyChange()
+end)
+fixedBtn.MouseButton1Click:Connect(function()
+    _G.PingSpoofMode = "fixed"
+    refreshModeButtons()
+    applyChange()
+end)
 
 ------------------------------------------------------------
 -- Number input row
@@ -470,6 +532,8 @@ local function makeNumberRow(labelText, getter, setter, hint)
             setter(math.max(0, math.floor(n)))
         end
         box.Text = tostring(getter())
+        recomputeIfChanged(true)
+        pushToLabels()
     end)
 
     return box
@@ -520,6 +584,10 @@ end
 toggleBtn.MouseButton1Click:Connect(function()
     _G.PingSpoofEnabled = not _G.PingSpoofEnabled
     refreshToggle()
+    if _G.PingSpoofEnabled then
+        recomputeIfChanged(true)
+        pushToLabels()
+    end
 end)
 
 ------------------------------------------------------------

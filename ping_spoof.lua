@@ -74,36 +74,66 @@ local function getRealPing()
     return 0
 end
 
--- Smooth jitter using two out-of-phase sine waves + a tiny random nudge.
--- This produces nicer-looking variation than pure math.random() which
--- changes too sharply between frames.
-local jitterSeed = math.random() * 1000
-local function smoothJitter(amount)
-    if amount <= 0 then return 0 end
-    local t = (tick() + jitterSeed) * DRIFT_SPEED
-    local wave = math.sin(t) * 0.6 + math.sin(t * 2.3 + 1.7) * 0.4
-    local nudge = (math.random() - 0.5) * 0.4
-    return math.floor((wave + nudge) * amount + 0.5)
-end
+-- The displayed value is recomputed ONLY when the real ping (or a config
+-- value) changes. This keeps the spoofed number perfectly in sync with
+-- the actual cadence of your connection (real ping in Roblox refreshes
+-- about once per second), so the HUD never looks jittery or fake.
+local cachedDisplayed   = 0
+local lastRealInt       = nil
+local lastMode          = nil
+local lastExtra         = nil
+local lastFixed         = nil
+local lastJitter        = nil
+local lastJitterSample  = 0
 
-local function computeDisplayedPing()
-    local mode   = _G.PingSpoofMode or MODE
-    local jitter = smoothJitter(_G.PingSpoofJitter or JITTER)
+local function recomputeIfChanged(force)
+    local mode    = _G.PingSpoofMode   or MODE
+    local extra   = _G.PingSpoofExtra  or EXTRA_PING
+    local fixed   = _G.PingSpoofFixed  or FAKE_PING
+    local jitter  = _G.PingSpoofJitter or JITTER
+    local realInt = math.floor(getRealPing() + 0.5)
+
+    local changed = force
+        or realInt ~= lastRealInt
+        or mode    ~= lastMode
+        or extra   ~= lastExtra
+        or fixed   ~= lastFixed
+        or jitter  ~= lastJitter
+
+    if not changed then return false end
+
+    -- Resample jitter only when real ping (or config) actually changes.
+    if jitter > 0 then
+        lastJitterSample = math.random(-jitter, jitter)
+    else
+        lastJitterSample = 0
+    end
 
     local base
     if mode == "fixed" then
-        base = _G.PingSpoofFixed or FAKE_PING
-    else -- "add"
-        base = getRealPing() + (_G.PingSpoofExtra or EXTRA_PING)
+        base = fixed
+    else
+        base = realInt + extra
     end
 
-    local value = math.max(1, math.floor(base + jitter + 0.5))
-    return value
+    cachedDisplayed = math.max(1, base + lastJitterSample)
+    lastRealInt = realInt
+    lastMode    = mode
+    lastExtra   = extra
+    lastFixed   = fixed
+    lastJitter  = jitter
+    return true
+end
+
+local function computeDisplayedPing()
+    return cachedDisplayed
 end
 
 local function buildText()
-    return tostring(computeDisplayedPing()) .. SUFFIX
+    return tostring(cachedDisplayed) .. SUFFIX
 end
+
+recomputeIfChanged(true)
 
 -- Decide whether a given Instance is a ping-displaying TextLabel/TextButton.
 local function isPingLabel(inst)
@@ -208,18 +238,18 @@ end
 watchDescendants(PlayerGui)
 watchDescendants(CoreGui)
 
--- Refresh + periodic rescan loop.
-local refreshAccum, rescanAccum = 0, 0
-RunService.RenderStepped:Connect(function(dt)
-    if not _G.PingSpoofEnabled then return end
-
-    refreshAccum = refreshAccum + dt
-    if refreshAccum >= UPDATE_INTERVAL then
-        refreshAccum = 0
-        local desired = buildText()
-        for label in pairs(hooked) do
-            if label and label.Parent then
-                if label.Text ~= desired then
+-- Poll real ping a few times a second; only WRITE to labels when the
+-- displayed value actually changes. The effective text-update rate is
+-- therefore identical to your real ping's update rate (≈1 Hz).
+local pollAccum, rescanAccum = 0, 0
+RunService.Heartbeat:Connect(function(dt)
+    pollAccum = pollAccum + dt
+    if pollAccum >= UPDATE_INTERVAL then
+        pollAccum = 0
+        if _G.PingSpoofEnabled and recomputeIfChanged(false) then
+            local desired = buildText()
+            for label in pairs(hooked) do
+                if label and label.Parent and label.Text ~= desired then
                     label.Text = desired
                 end
             end
