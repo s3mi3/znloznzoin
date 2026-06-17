@@ -1,50 +1,57 @@
 --[[
-    Ping Display Spoofer  (v2 — robust)
-    -----------------------------------
-    Changes whatever on-screen label is showing your ping ("NetworkPing",
-    "35 ms", etc.) to any value you want. Works for both the built-in
-    Roblox Performance Stats overlay AND custom in-game HUDs that live
-    in PlayerGui.
+    Ping Display Spoofer  (v3 — realistic)
+    --------------------------------------
+    Overrides the on-screen ping HUD with a value that LOOKS real:
+    it takes your actual current ping and adds a configurable offset
+    plus small natural jitter, so the number drifts up and down the
+    way a real connection does.
+
+    Two modes:
+        "add"   (default)  -> displayed = realPing + EXTRA_PING + jitter
+        "fixed"            -> displayed = FAKE_PING + jitter
 
     This is purely a client-side visual change. Your real latency and
     what other players see are unaffected.
 
-    USAGE
-        1. Edit FAKE_PING below (or set _G.FakePing at runtime).
-        2. Run the script in your executor.
-        3. Watch the output — it prints which labels it hooked.
-
     LIVE CONTROL
-        _G.FakePing = 12              -- change shown value
-        _G.PingSpoofEnabled = false   -- stop the spoof
-        _G.PingSpoofDebug = true      -- verbose logging
+        _G.PingSpoofMode      = "add"   -- or "fixed"
+        _G.PingSpoofExtra     = 50      -- ms added to real ping
+        _G.PingSpoofJitter    = 4       -- +/- random ms wiggle
+        _G.PingSpoofFixed     = 35      -- value used in "fixed" mode
+        _G.PingSpoofEnabled   = false   -- stop the spoof
+        _G.PingSpoofDebug     = true    -- verbose logging
 ]]
 
 ------------------------------------------------------------
 -- CONFIG
 ------------------------------------------------------------
-local FAKE_PING        = 35       -- the number that will be shown
-local SUFFIX           = " ms"    -- text appended after the number
-local RANDOM_JITTER    = 0        -- +/- random variation each update
-local UPDATE_INTERVAL  = 0.1      -- seconds between refreshes
-local RESCAN_INTERVAL  = 1.0      -- how often we re-scan for new labels
+local MODE             = "add"     -- "add" or "fixed"
+local EXTRA_PING       = 50        -- ms added to your REAL ping (mode "add")
+local FAKE_PING        = 35        -- used in mode "fixed"
+local JITTER           = 4         -- +/- random ms wiggle per refresh
+local DRIFT_SPEED      = 0.6       -- how fast the wiggle moves (smaller = slower)
+local SUFFIX           = " ms"     -- text appended after the number
+local UPDATE_INTERVAL  = 0.25      -- seconds between refreshes (lower = jumpier)
+local RESCAN_INTERVAL  = 1.0       -- how often we re-scan for new labels
 
 -- Name candidates (case-insensitive contains match on Name):
 local NAME_KEYWORDS    = { "ping", "networkping", "latency", "ms" }
 
--- Text pattern: anything that looks like "<number> ms" (with optional
--- surrounding whitespace / leading text). This is what catches custom
--- HUDs like the one in the screenshot.
+-- Text pattern: anything that looks like "<number> ms"
 local TEXT_PATTERN     = "^%s*[%w%p]*%s*%d+%s*ms%s*$"
 ------------------------------------------------------------
 
 _G.PingSpoofEnabled = true
-_G.FakePing         = _G.FakePing or FAKE_PING
+_G.PingSpoofMode    = _G.PingSpoofMode   or MODE
+_G.PingSpoofExtra   = _G.PingSpoofExtra  or EXTRA_PING
+_G.PingSpoofFixed   = _G.PingSpoofFixed  or FAKE_PING
+_G.PingSpoofJitter  = _G.PingSpoofJitter or JITTER
 _G.PingSpoofDebug   = _G.PingSpoofDebug == nil and true or _G.PingSpoofDebug
 
 local Players      = game:GetService("Players")
 local CoreGui      = game:GetService("CoreGui")
 local RunService   = game:GetService("RunService")
+local Stats        = game:GetService("Stats")
 local LocalPlayer  = Players.LocalPlayer
 local PlayerGui    = LocalPlayer and LocalPlayer:WaitForChild("PlayerGui", 5)
 
@@ -54,12 +61,48 @@ local function dbg(...)
     end
 end
 
-local function buildText()
-    local value = _G.FakePing or FAKE_PING
-    if RANDOM_JITTER > 0 then
-        value = value + math.random(-RANDOM_JITTER, RANDOM_JITTER)
+-- Read the player's real ping in ms. Roblox exposes this through
+-- Stats.Network.ServerStatsItem["Data Ping"]:GetValue(). Wrapped in
+-- pcall because the path can vary slightly across client versions.
+local function getRealPing()
+    local ok, value = pcall(function()
+        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    if ok and typeof(value) == "number" then
+        return value
     end
-    return tostring(value) .. SUFFIX
+    return 0
+end
+
+-- Smooth jitter using two out-of-phase sine waves + a tiny random nudge.
+-- This produces nicer-looking variation than pure math.random() which
+-- changes too sharply between frames.
+local jitterSeed = math.random() * 1000
+local function smoothJitter(amount)
+    if amount <= 0 then return 0 end
+    local t = (tick() + jitterSeed) * DRIFT_SPEED
+    local wave = math.sin(t) * 0.6 + math.sin(t * 2.3 + 1.7) * 0.4
+    local nudge = (math.random() - 0.5) * 0.4
+    return math.floor((wave + nudge) * amount + 0.5)
+end
+
+local function computeDisplayedPing()
+    local mode   = _G.PingSpoofMode or MODE
+    local jitter = smoothJitter(_G.PingSpoofJitter or JITTER)
+
+    local base
+    if mode == "fixed" then
+        base = _G.PingSpoofFixed or FAKE_PING
+    else -- "add"
+        base = getRealPing() + (_G.PingSpoofExtra or EXTRA_PING)
+    end
+
+    local value = math.max(1, math.floor(base + jitter + 0.5))
+    return value
+end
+
+local function buildText()
+    return tostring(computeDisplayedPing()) .. SUFFIX
 end
 
 -- Decide whether a given Instance is a ping-displaying TextLabel/TextButton.
@@ -206,5 +249,14 @@ _G.PingSpoofDump = function()
     print("[PingSpoof] End of dump.")
 end
 
-print(("[PingSpoof] Active — target text: %s. Hooked %d label(s)."):format(buildText(), hits))
+do
+    local mode = _G.PingSpoofMode or MODE
+    if mode == "fixed" then
+        print(("[PingSpoof] Active [fixed] — base %d ms (+/- %d jitter). Hooked %d label(s).")
+            :format(_G.PingSpoofFixed or FAKE_PING, _G.PingSpoofJitter or JITTER, hits))
+    else
+        print(("[PingSpoof] Active [add] — real ping + %d ms (+/- %d jitter). Real ping right now: %d ms. Hooked %d label(s).")
+            :format(_G.PingSpoofExtra or EXTRA_PING, _G.PingSpoofJitter or JITTER, math.floor(getRealPing() + 0.5), hits))
+    end
+end
 print("[PingSpoof] If nothing changed, run:  _G.PingSpoofDump()  to see candidate labels.")
