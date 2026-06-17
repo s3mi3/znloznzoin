@@ -1,67 +1,73 @@
 # Ping Display Spoofer
 
-A small Roblox Lua script that overrides the on-screen ping HUD with a
-realistic-looking value. By default it shows **your real ping plus an
-offset**, with subtle smooth jitter so the number drifts naturally
-instead of sitting on one constant value.
+Roblox Lua scripts that override the on-screen ping HUD with a
+realistic-looking value (your real ping plus an offset, with smooth
+jitter so it drifts naturally instead of sitting on one number).
 
-> ⚠️ **Purely cosmetic.** It changes the text on your own screen only.
-> Your actual network latency is not modified and other players cannot
-> see the fake value.
+> ⚠️ **Purely cosmetic.** Changes only what *you* see on your own screen.
+> Your real network latency is unchanged and other players cannot see
+> the fake value.
+
+## Files
+
+| File                | What it is                                              |
+| ------------------- | ------------------------------------------------------- |
+| `ping_spoof_ui.lua` | **Recommended.** Full script with a draggable in-game control panel. |
+| `ping_spoof.lua`    | Same engine, no UI — configure via the CONFIG block or `_G.*` globals. |
+
+## Quick start (UI version)
+
+1. Execute `ping_spoof_ui.lua` in your executor.
+2. A panel appears on the left of your screen with:
+   - **STATUS** — live "Real ping" vs "Shown ping" readout.
+   - **MODE** — toggle between `ADD` (real + extra) and `FIXED`.
+   - **Extra ping** — ms added to your real ping in ADD mode.
+   - **Fixed ping** — value used in FIXED mode.
+   - **Jitter** — how much the value wiggles (±ms) for realism.
+   - **SPOOF: ENABLED / DISABLED** — big toggle button.
+3. Drag the title bar to move the panel.
+4. Press **RightShift** to hide / show it. Close with the `×` button.
+
+All changes apply instantly — no need to re-execute.
 
 ## Modes
 
-| Mode      | Formula                                  | Use when                                        |
-| --------- | ---------------------------------------- | ----------------------------------------------- |
-| `"add"`   | `realPing + EXTRA_PING + jitter`         | You want it to *look real* — moves with your connection. **(default)** |
-| `"fixed"` | `FAKE_PING + jitter`                     | You want a specific number that wiggles a bit.  |
+| Mode    | Formula                                  |
+| ------- | ---------------------------------------- |
+| `add`   | `realPing + EXTRA_PING + jitter` *(default)* |
+| `fixed` | `FAKE_PING + jitter`                     |
 
-## Quick start
-
-1. Open `ping_spoof.lua`.
-2. (Optional) edit the **CONFIG** block:
-   - `MODE` — `"add"` or `"fixed"`.
-   - `EXTRA_PING` — ms added to your real ping in `"add"` mode (e.g. `50`, `100`, `200`).
-   - `FAKE_PING` — value used in `"fixed"` mode.
-   - `JITTER` — how many ms the value wiggles by (set to `0` to lock it).
-   - `DRIFT_SPEED` — how fast the wiggle moves (lower = slower drift).
-   - `UPDATE_INTERVAL` — refresh rate. Lower = jumpier looking.
-3. Run the script in your executor.
-
-## Live control from the console
+## Live control from the console (no UI required)
 
 ```lua
 _G.PingSpoofMode   = "add"      -- or "fixed"
-_G.PingSpoofExtra  = 80         -- show real ping + 80 ms
-_G.PingSpoofJitter = 6          -- wiggle by +/- 6 ms
-_G.PingSpoofFixed  = 120        -- value used in "fixed" mode
+_G.PingSpoofExtra  = 80         -- ms added to real ping
+_G.PingSpoofJitter = 6          -- +/- ms wiggle
+_G.PingSpoofFixed  = 120        -- value used in FIXED mode
 _G.PingSpoofEnabled = false     -- stop the spoof
 ```
 
 ## Troubleshooting — "it's not changing anything"
 
-The script prints `[PingSpoof] Active ... Hooked N label(s).` when it
-runs. If `N` is `0`, the label wasn't auto-detected. Run this:
+The script prints `[PingSpoof] ...` lines when it loads. If you don't
+see the ping in the HUD change, the label wasn't auto-detected. From
+your executor's console run:
 
 ```lua
-_G.PingSpoofDump()
+_G.PingSpoofDump()    -- (no-UI script) lists every label whose text contains "ms"
 ```
 
-It will print every `TextLabel`/`TextButton` whose text contains
-`"ms"`, with its full path and name. Either:
-- Tell me the **Name** and I'll add it to `NAME_KEYWORDS`, or
-- Add the name yourself to the `NAME_KEYWORDS` list at the top of the
-  script.
+Take the **Name** that matches the on-screen ping label and add it to
+`NAME_KEYWORDS` at the top of the script.
 
 ## How it works
 
 1. Reads your real ping from `Stats.Network.ServerStatsItem["Data Ping"]`.
 2. Adds `EXTRA_PING` plus smooth sine-wave jitter (two out-of-phase
-   waves plus a tiny random nudge — looks more natural than pure
-   `math.random()`).
-3. Walks `PlayerGui` + `CoreGui` looking for `TextLabel`/`TextButton`
-   objects whose **Name** contains `ping`/`latency`/`ms`, or whose
-   **Text** matches the pattern `<number> ms`.
+   waves + tiny random nudge — natural-looking variation).
+3. Walks `PlayerGui` + `CoreGui` for `TextLabel`/`TextButton` objects
+   whose **Name** contains `ping`/`latency`/`ms`, or whose **Text**
+   matches the pattern `<number> ms`.
 4. Rewrites `.Text` with the spoofed value.
 5. Hooks `GetPropertyChangedSignal("Text")` so the game's update loop
    can't restore the real ping.
