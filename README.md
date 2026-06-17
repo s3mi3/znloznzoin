@@ -1,47 +1,58 @@
 # Ping Display Spoofer
 
-A small Roblox Lua script that lets you make the in-game **NetworkPing** HUD
-display any number you choose.
+A small Roblox Lua script that lets you make the in-game ping HUD display
+any number you choose.
 
-> ⚠️ **This is purely cosmetic.** It changes the text on your own screen only.
-> Your actual network latency is not modified and other players cannot see
-> the fake value. Use this for screenshots, streams, or just for fun — do
-> not use it to mislead anyone in a competitive setting.
+> ⚠️ **Purely cosmetic.** It changes the text on your own screen only.
+> Your actual network latency is not modified and other players cannot
+> see the fake value.
 
 ## Usage
 
 1. Open `ping_spoof.lua`.
-2. Edit the **CONFIG** block at the top:
-   - `FAKE_PING` — the number shown in the HUD (e.g. `35`, `1`, `999`).
-   - `SUFFIX` — text appended after the number (default `" ms"`).
-   - `RANDOM_JITTER` — set to e.g. `2` to make the value wiggle by ±2 each
-     update for a more realistic look. `0` keeps it locked.
-   - `UPDATE_INTERVAL` — how often (seconds) the value is refreshed.
-3. Run the script through any Roblox executor that can access `CoreGui`.
+2. Edit `FAKE_PING` at the top.
+3. Run the script in your executor.
 
-## Changing the value at runtime
+The script automatically scans both `CoreGui` **and** `PlayerGui`, so it
+works for the built-in Performance Stats overlay as well as custom in-game
+HUDs (like the one in the screenshot showing `NetworkPing` / `35 ms`).
 
-The script reads `_G.FakePing` every tick, so you can change the value from
-your executor's console without re-running:
+## Live control from the console
 
 ```lua
-_G.FakePing = 1     -- show "1 ms"
-_G.FakePing = 420   -- show "420 ms"
+_G.FakePing = 12              -- change displayed value on the fly
+_G.PingSpoofEnabled = false   -- stop the spoof
+_G.PingSpoofDebug = true      -- verbose logging (on by default)
 ```
 
-## Disabling
+## Troubleshooting — "it's not changing anything"
+
+The script prints `[PingSpoof] Active — ... Hooked N label(s).` when it
+runs. If `N` is `0`, it didn't recognise the label. Run this in your
+executor's console:
 
 ```lua
-_G.PingSpoofEnabled = false
+_G.PingSpoofDump()
 ```
+
+It will print every `TextLabel`/`TextButton` whose text contains `"ms"`,
+along with its full path and name. Copy the **Name** of the one that
+shows your ping and add it to `NAME_KEYWORDS` at the top of the script,
+then re-run.
+
+Other things to check:
+- Make sure your executor has CoreGui access (most modern ones do).
+- Some games rebuild the HUD on respawn — the script auto-rescans every
+  second, so just wait a moment.
+- If the value flickers back briefly, lower `UPDATE_INTERVAL` (e.g. `0.05`).
 
 ## How it works
 
-The performance overlay you see in the screenshot is a `TextLabel` named
-`NetworkPing` inside `CoreGui`. The script:
-
-1. Walks `CoreGui` to find every label named `NetworkPing`.
-2. Overwrites the label's `Text` with your chosen value.
-3. Hooks `GetPropertyChangedSignal("Text")` so the game's normal update
-   loop can't put the real ping back.
-4. Re-scans periodically in case the HUD is rebuilt.
+1. Walks `PlayerGui` + `CoreGui` looking for `TextLabel`/`TextButton`
+   objects whose **Name** contains `ping`/`latency`/`ms`, or whose
+   **Text** matches the pattern `<number> ms`.
+2. Rewrites `.Text` with your chosen value.
+3. Hooks `GetPropertyChangedSignal("Text")` so the game's update loop
+   can't restore the real ping.
+4. Watches `DescendantAdded` and re-scans periodically to catch HUDs
+   that get rebuilt (e.g. on respawn).
