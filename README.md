@@ -15,8 +15,8 @@ Load the script in Vector, whitelist players from the overlay, hold XBUTTON2 to
 arm detection, and use the overlay's `Trigger:` button to choose
 `GunFiring + Ammo`, `GunFiring only`, or `Ammo only`.
 
-Use the overlay's `First delay:` slider to delay the first click after a shot is
-detected. Leave it at `0ms` for instant clicking.
+Use the overlay's `First delay:` slider near the top of the panel to delay the
+first click after a shot is detected. Leave it at `0ms` for instant clicking.
 
 Press F8 to hide or show the overlay. Shot detection and clicking keep running
 while the overlay is hidden.

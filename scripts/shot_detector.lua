@@ -452,6 +452,7 @@ local function draw_panel()
     local px, py, pw = 14, 14, 232
     local row_h, hdr_h, btn_h, gap = 22, 26, 24, 4
     local trigger_h, delay_h, status_h = 24, 26, 18
+    local controls_h = gap + trigger_h + gap + delay_h + status_h
     local list = {}
 
     for _, player in ipairs(entity.get_players()) do
@@ -460,7 +461,7 @@ local function draw_panel()
         end
     end
 
-    local panel_h = hdr_h + #list * row_h + gap + btn_h + gap + trigger_h + gap + delay_h + status_h + 6
+    local panel_h = hdr_h + controls_h + #list * row_h + gap + btn_h + 4
     draw.rect_filled(px, py, pw, panel_h, { 0.04, 0.04, 0.09, 0.9 }, 5)
     draw.rect(px, py, pw, panel_h, { 0.28, 0.52, 1, 0.7 }, 5)
     draw.rect_filled(px, py, pw, hdr_h, { 0.1, 0.22, 0.52, 0.95 }, 5)
@@ -479,69 +480,9 @@ local function draw_panel()
     local mx, my = utility.get_mouse_pos()
     local lmb_now = input.is_key_down(LMB_VK)
     local clicked = lmb_now and not prev_lmb
-
-    for i, player in ipairs(list) do
-        local ry = py + hdr_h + (i - 1) * row_h
-        local name = player.name
-        local wl = whitelist[name] ~= nil
-        local hover = mx >= px and mx <= px + pw and my >= ry and my <= ry + row_h
-
-        draw.rect_filled(px + 2, ry, pw - 4, row_h,
-            selected == name and { 0.28, 0.48, 0.95, 0.4 } or
-            wl and { 0.08, 0.42, 0.12, 0.32 } or
-            hover and { 1, 1, 1, 0.08 } or { 0, 0, 0, 0 })
-
-        draw.circle_filled(px + 11, ry + row_h / 2, 4,
-            wl and { 0.2, 1, 0.45, 1 } or { 0.4, 0.4, 0.4, 0.55 })
-
-        local label = name
-        if wl and ammo_cache[name] ~= nil then
-            label = name .. "  [" .. tostring(ammo_cache[name]) .. "]"
-        end
-
-        draw.text(px + 20, ry + row_h / 2 - 6, label,
-            wl and { 0.32, 1, 0.52, 1 } or { 1, 1, 1, 0.85 }, 12)
-
-        if hover and clicked then selected = name end
-    end
-
-    if #list == 0 then
-        draw.text(px + 8, py + hdr_h + 4, "No other players", { 0.5, 0.5, 0.5, 0.8 }, 12)
-    end
-
-    local btn_y = py + hdr_h + #list * row_h + gap
     local bx, bw = px + 3, pw - 6
-    local hover_button = mx >= bx and mx <= bx + bw and my >= btn_y and my <= btn_y + btn_h
-    local selected_whitelisted = selected and whitelist[selected]
-    local button_label = not selected and "Select a player"
-        or selected_whitelisted and ("Remove: " .. selected)
-        or ("Whitelist: " .. selected)
-    local button_color = selected_whitelisted
-        and (hover_button and { 0.88, 0.2, 0.2, 0.95 } or { 0.65, 0.12, 0.12, 0.88 })
-        or (hover_button and { 0.25, 0.6, 1, 0.95 } or { 0.14, 0.42, 0.8, 0.88 })
 
-    draw.rect_filled(bx, btn_y, bw, btn_h, button_color, 4)
-    draw.rect(bx, btn_y, bw, btn_h, { 0.45, 0.7, 1, 0.55 }, 4)
-    local tw, th = draw.get_text_size(button_label, 12)
-    draw.text(bx + bw / 2 - tw / 2, btn_y + btn_h / 2 - th / 2, button_label, { 1, 1, 1, 1 }, 12)
-
-    if hover_button and clicked and selected then
-        if whitelist[selected] then
-            clear_player(selected)
-        else
-            if not whitelist[selected] then
-                whitelist_count = whitelist_count + 1
-            end
-            whitelist[selected] = true
-            gf_refs[selected] = nil
-            ammo_refs[selected] = nil
-            gf_state[selected] = nil
-            ammo_state[selected] = nil
-            refresh_refs()
-        end
-    end
-
-    local trigger_y = btn_y + btn_h + gap
+    local trigger_y = py + hdr_h + gap
     local hover_trigger = mx >= bx and mx <= bx + bw and my >= trigger_y and my <= trigger_y + trigger_h
     local trigger_label = "Trigger: " .. trigger_name()
     local trigger_color = hover_trigger and { 0.25, 0.6, 1, 0.95 } or { 0.11, 0.22, 0.42, 0.9 }
@@ -585,6 +526,66 @@ local function draw_panel()
 
     local status_y = delay_y + delay_h + 3
     draw.text(bx + 2, status_y + 3, _last_event_text, _last_event_color, 11)
+
+    for i, player in ipairs(list) do
+        local ry = py + hdr_h + controls_h + (i - 1) * row_h
+        local name = player.name
+        local wl = whitelist[name] ~= nil
+        local hover = mx >= px and mx <= px + pw and my >= ry and my <= ry + row_h
+
+        draw.rect_filled(px + 2, ry, pw - 4, row_h,
+            selected == name and { 0.28, 0.48, 0.95, 0.4 } or
+            wl and { 0.08, 0.42, 0.12, 0.32 } or
+            hover and { 1, 1, 1, 0.08 } or { 0, 0, 0, 0 })
+
+        draw.circle_filled(px + 11, ry + row_h / 2, 4,
+            wl and { 0.2, 1, 0.45, 1 } or { 0.4, 0.4, 0.4, 0.55 })
+
+        local label = name
+        if wl and ammo_cache[name] ~= nil then
+            label = name .. "  [" .. tostring(ammo_cache[name]) .. "]"
+        end
+
+        draw.text(px + 20, ry + row_h / 2 - 6, label,
+            wl and { 0.32, 1, 0.52, 1 } or { 1, 1, 1, 0.85 }, 12)
+
+        if hover and clicked then selected = name end
+    end
+
+    if #list == 0 then
+        draw.text(px + 8, py + hdr_h + controls_h + 4, "No other players", { 0.5, 0.5, 0.5, 0.8 }, 12)
+    end
+
+    local btn_y = py + hdr_h + controls_h + #list * row_h + gap
+    local hover_button = mx >= bx and mx <= bx + bw and my >= btn_y and my <= btn_y + btn_h
+    local selected_whitelisted = selected and whitelist[selected]
+    local button_label = not selected and "Select a player"
+        or selected_whitelisted and ("Remove: " .. selected)
+        or ("Whitelist: " .. selected)
+    local button_color = selected_whitelisted
+        and (hover_button and { 0.88, 0.2, 0.2, 0.95 } or { 0.65, 0.12, 0.12, 0.88 })
+        or (hover_button and { 0.25, 0.6, 1, 0.95 } or { 0.14, 0.42, 0.8, 0.88 })
+
+    draw.rect_filled(bx, btn_y, bw, btn_h, button_color, 4)
+    draw.rect(bx, btn_y, bw, btn_h, { 0.45, 0.7, 1, 0.55 }, 4)
+    local tw, th = draw.get_text_size(button_label, 12)
+    draw.text(bx + bw / 2 - tw / 2, btn_y + btn_h / 2 - th / 2, button_label, { 1, 1, 1, 1 }, 12)
+
+    if hover_button and clicked and selected then
+        if whitelist[selected] then
+            clear_player(selected)
+        else
+            if not whitelist[selected] then
+                whitelist_count = whitelist_count + 1
+            end
+            whitelist[selected] = true
+            gf_refs[selected] = nil
+            ammo_refs[selected] = nil
+            gf_state[selected] = nil
+            ammo_state[selected] = nil
+            refresh_refs()
+        end
+    end
 
     prev_lmb = lmb_now
 end
