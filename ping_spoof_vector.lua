@@ -51,26 +51,29 @@ menu.add_slider_float("Ping Spoof", "Value", "jitter", "Jitter",
 menu.add_slider_float("Ping Spoof", "Value", "resample", "Update every",
     200, 3000, 1000, "%.0f ms")
 
--- Overlay position
+-- Overlay position — defaults roughly target Roblox's built-in
+-- Performance Stats "NetworkPing" cell on a common 1920-wide screen;
+-- fine-tune with the position guide.
 menu.add_slider_float("Ping Spoof", "Overlay position", "ox",
-    "X from right edge", 0, 1000, 90, "%.0f px")
+    "X from right edge", 0, 2000, 250, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "oy",
-    "Y from top", 0, 500, 20, "%.0f px")
+    "Y from top", 0, 500, 24, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "ow",
-    "Width", 20, 400, 80, "%.0f px")
+    "Width", 20, 400, 90, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "oh",
-    "Height", 10, 120, 22, "%.0f px")
+    "Height", 10, 120, 20, "%.0f px")
 menu.add_checkbox(    "Ping Spoof", "Overlay position", "guide",
     "Show position guide (yellow outline)", false)
 
--- Style
+-- Style — defaults blend into the Roblox Performance Stats bar
+-- (dark semi-transparent grey background, white text).
 menu.add_slider_float( "Ping Spoof", "Style", "font_size", "Font size",
     8, 32, 13, "%.0f")
 menu.add_input(        "Ping Spoof", "Style", "suffix", "Suffix", " ms")
 menu.add_colorpicker(  "Ping Spoof", "Style", "bgcol",  "Background",
-    {0.05, 0.05, 0.07, 0.95})
+    {0.13, 0.13, 0.14, 0.85})
 menu.add_colorpicker(  "Ping Spoof", "Style", "txtcol", "Text",
-    {0.95, 0.95, 1.00, 1.00})
+    {1.00, 1.00, 1.00, 1.00})
 menu.add_checkbox(     "Ping Spoof", "Style", "center",
     "Center text (else left align)", true)
 
