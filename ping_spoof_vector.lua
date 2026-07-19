@@ -1,113 +1,108 @@
 --[[
-    Ping Display Spoofer  —  Vector Lua Engine port
-    -----------------------------------------------
-    This is a port of the Roblox-executor version for the external Vector
-    engine (https://project-vector-1.gitbook.io/vector-lua-engine).
+    Ping Display Spoofer  —  Vector Lua Engine port  (v6)
+    -----------------------------------------------------
+    Two spoof methods, each toggleable:
 
-    Constraints of the Vector Game API that shape this port:
-      * No `Instance.new`, no `RunService`, no `Stats` service — we run
-        under `on_frame()` and `thread.create()`.
-      * `GuiObject.Text` is read-only through this API, so we cannot
-        overwrite the HUD label directly.
-      * Numbers that live in the game's Lua heap CAN be patched via the
-        GC API (`applygc`). Most custom Roblox HUDs cache the current
-        ping in a plain Lua variable each frame before writing it to the
-        label — that's the value we patch.
+      1. OVERLAY COVER (default, most reliable)
+         Uses the `draw` API to paint a fake "<number> ms" on top of the
+         real ping display. Works against anything — including the
+         Roblox built-in Performance Stats overlay whose ping value
+         lives in native code and can't be patched via the GC API.
 
-    Workflow:
-      1. Load this script in the Vector engine.
-      2. Open the "Ping Spoof" tab in the menu.
-      3. Enable the spoof and pick a mode + values.
-      4. If nothing changes, click "Dump GC to file" to write every
-         Lua key in the process to disk. Open the file, find the key
-         name your game uses for ping (search for "ping", "ms", or a
-         number matching what the HUD shows), and paste it into the
-         "Ping key names" input.
+      2. GC PATCHING (advanced)
+         For custom in-game HUDs that store ping in a plain Lua
+         variable. Uses `applygc` to write the spoofed value on a
+         background thread. Requires knowing the game's variable name
+         (use "Dump GC to file" and search the dump if defaults miss).
 
     Purely cosmetic — only changes what YOU see on your screen. Real
     network latency is unchanged and other players see your true ping.
 ]]
 
 ------------------------------------------------------------
--- CONFIG (initial values; everything is editable from the menu)
+-- CONFIG (initial defaults; everything is editable in the menu)
 ------------------------------------------------------------
 local DEFAULT_KEYS = "Ping,NetworkPing,DisplayPing,ClientPing,Latency,PingMS,PingValue,PingText,NetPing"
-local DEFAULT_MODE_INDEX  = 0     -- 0 = Add to real, 1 = Fixed
-local DEFAULT_EXTRA       = 50    -- ms added to real ping
-local DEFAULT_FIXED       = 35
-local DEFAULT_JITTER      = 4
-local DEFAULT_INTERVAL_MS = 100
-local DEFAULT_DUMP_PATH   = "C:/vector_gc_dump.txt"
+local DEFAULT_DUMP_PATH = "C:/vector_gc_dump.txt"
 
 ------------------------------------------------------------
 -- MENU
 ------------------------------------------------------------
 menu.add_tab("Ping Spoof", "P")
 
-menu.add_group("Ping Spoof", "Spoof",   0)
-menu.add_group("Ping Spoof", "Values",  0, true)
-menu.add_group("Ping Spoof", "Keys",   -1)
-menu.add_group("Ping Spoof", "Status", -1)
+menu.add_group("Ping Spoof", "Method",           -1)
+menu.add_group("Ping Spoof", "Value",             0)
+menu.add_group("Ping Spoof", "Overlay position",  0, true)
+menu.add_group("Ping Spoof", "Style",            -1)
+menu.add_group("Ping Spoof", "GC patching",      -1)
+menu.add_group("Ping Spoof", "Status",           -1)
 
-menu.add_checkbox(   "Ping Spoof", "Spoof", "enabled", "Enable Spoof", false)
-menu.add_combo(      "Ping Spoof", "Spoof", "mode", "Mode",
-    {"Add to real", "Fixed value"}, DEFAULT_MODE_INDEX)
-menu.add_slider_float("Ping Spoof", "Spoof", "interval", "Patch interval (ms)",
-    50, 1000, DEFAULT_INTERVAL_MS, "%.0f ms")
+-- Method
+menu.add_checkbox("Ping Spoof", "Method", "overlay_on",
+    "Draw overlay cover  (recommended)", true)
+menu.add_checkbox("Ping Spoof", "Method", "gc_on",
+    "Also patch game Lua state (advanced)", false)
 
-menu.add_slider_float("Ping Spoof", "Values", "extra",  "Extra ping",
-    0, 500,  DEFAULT_EXTRA,  "+%.0f ms")
-menu.add_slider_float("Ping Spoof", "Values", "fixed",  "Fixed ping",
-    1, 1000, DEFAULT_FIXED,  "%.0f ms")
-menu.add_slider_float("Ping Spoof", "Values", "jitter", "Jitter",
-    0, 50,   DEFAULT_JITTER, "+/-%.0f ms")
+-- Value
+menu.add_slider_float("Ping Spoof", "Value", "shown",  "Ping to display",
+    1, 999, 35, "%.0f ms")
+menu.add_slider_float("Ping Spoof", "Value", "jitter", "Jitter",
+    0, 50, 4, "+/-%.0f ms")
+menu.add_slider_float("Ping Spoof", "Value", "resample", "Update every",
+    200, 3000, 1000, "%.0f ms")
 
-menu.add_input( "Ping Spoof", "Keys", "keys",
+-- Overlay position
+menu.add_slider_float("Ping Spoof", "Overlay position", "ox",
+    "X from right edge", 0, 1000, 90, "%.0f px")
+menu.add_slider_float("Ping Spoof", "Overlay position", "oy",
+    "Y from top", 0, 500, 20, "%.0f px")
+menu.add_slider_float("Ping Spoof", "Overlay position", "ow",
+    "Width", 20, 400, 80, "%.0f px")
+menu.add_slider_float("Ping Spoof", "Overlay position", "oh",
+    "Height", 10, 120, 22, "%.0f px")
+menu.add_checkbox(    "Ping Spoof", "Overlay position", "guide",
+    "Show position guide (yellow outline)", false)
+
+-- Style
+menu.add_slider_float( "Ping Spoof", "Style", "font_size", "Font size",
+    8, 32, 13, "%.0f")
+menu.add_input(        "Ping Spoof", "Style", "suffix", "Suffix", " ms")
+menu.add_colorpicker(  "Ping Spoof", "Style", "bgcol",  "Background",
+    {0.05, 0.05, 0.07, 0.95})
+menu.add_colorpicker(  "Ping Spoof", "Style", "txtcol", "Text",
+    {0.95, 0.95, 1.00, 1.00})
+menu.add_checkbox(     "Ping Spoof", "Style", "center",
+    "Center text (else left align)", true)
+
+-- GC patching
+menu.add_input(       "Ping Spoof", "GC patching", "keys",
     "Ping key names (comma separated)", DEFAULT_KEYS)
-menu.add_button("Ping Spoof", "Keys", "dumpbtn", "Dump GC to file", function()
-    print("[PingSpoof] Dumping GC to " .. DEFAULT_DUMP_PATH .. " ...")
-    local n = dumpgc(DEFAULT_DUMP_PATH)
-    print("[PingSpoof] Wrote " .. tostring(n) .. " entries.")
-end)
-menu.add_button("Ping Spoof", "Keys", "warmbtn", "Warm key cache", function()
-    local keys = {}
-    for k in string.gmatch(menu.get("keys") or "", "([^,]+)") do
-        local trimmed = k:match("^%s*(.-)%s*$")
-        if trimmed ~= "" then table.insert(keys, trimmed) end
-    end
-    if #keys > 0 then
-        local n = getgc(keys)
-        print("[PingSpoof] Warmed cache — " .. tostring(n) .. " node(s) found.")
-    else
-        print("[PingSpoof] No keys configured.")
-    end
-end)
+menu.add_slider_float("Ping Spoof", "GC patching", "interval",
+    "Patch interval", 50, 1000, 100, "%.0f ms")
+menu.add_button(      "Ping Spoof", "GC patching", "dumpbtn",
+    "Dump GC to file", function()
+        print("[PingSpoof] Dumping GC to " .. DEFAULT_DUMP_PATH .. " ...")
+        local n = dumpgc(DEFAULT_DUMP_PATH)
+        print("[PingSpoof] Wrote " .. tostring(n) .. " entries.")
+    end)
 
-menu.add_label( "Ping Spoof", "Status", "Real ping is sampled from the visible HUD label.")
+-- Status
+menu.add_checkbox("Ping Spoof", "Status", "show_readout",
+    "Show status readout (bottom-left)", true)
 
 ------------------------------------------------------------
 -- STATE
 ------------------------------------------------------------
 refreshgc()
 
-local worker_thread    = nil
-local worker_interval  = DEFAULT_INTERVAL_MS
+local worker_thread   = nil
+local worker_interval = 100
+local parsed_keys     = {}
+local last_keys_input = ""
 
-local parsed_keys      = {}
-local last_keys_input  = ""
-
-local cached_real_ping = 0    -- last real value read from the HUD text
-local cached_shown     = 0    -- last value we wrote via applygc
-local last_jitter_ms   = 0
-local last_write_time  = 0
-local last_write_count = 0
-
-local cached_label     = nil  -- last TextLabel matched (Instance)
-local label_scan_time  = 0
-
-local LABEL_NAME_KEYWORDS = {
-    "ping", "networkping", "latency", "netping", "displayping",
-}
+local current_value    = 35    -- what the overlay + patch is displaying
+local next_resample_at = 0
+local last_patch_count = 0
 
 ------------------------------------------------------------
 -- HELPERS
@@ -126,106 +121,39 @@ local function refresh_keys_if_changed()
     if csv == last_keys_input then return end
     last_keys_input = csv
     parsed_keys = parse_key_csv(csv)
-    if #parsed_keys > 0 then
-        getgc(parsed_keys)   -- non-blocking warm
-    end
+    if #parsed_keys > 0 then getgc(parsed_keys) end
 end
 
--- Walk the local player's Instance tree to find a TextLabel whose Name
--- or Text looks like a ping display. Cached — we only rescan every
--- ~2 seconds or when the cached one becomes invalid.
-local function find_ping_label()
-    local now = utility.get_time()
-    if cached_label and utility.is_valid(cached_label) then
-        return cached_label
-    end
-    if now - label_scan_time < 2.0 then return nil end
-    label_scan_time = now
-
-    local roots = {}
-    if game.local_player and utility.is_valid(game.local_player) then
-        table.insert(roots, game.local_player)
-    end
-    local ok, sg = pcall(function() return game.get_service("StarterGui") end)
-    if ok and sg then table.insert(roots, sg) end
-    if game.workspace then table.insert(roots, game.workspace) end
-
-    for _, root in ipairs(roots) do
-        local ok2, descs = pcall(function() return root:get_descendants() end)
-        if ok2 and type(descs) == "table" then
-            for _, inst in ipairs(descs) do
-                if utility.is_valid(inst) and (inst:is_a("TextLabel") or inst:is_a("TextButton")) then
-                    local name = string.lower(inst.Name or "")
-                    local matched = false
-                    for _, kw in ipairs(LABEL_NAME_KEYWORDS) do
-                        if string.find(name, kw, 1, true) then matched = true; break end
-                    end
-                    if not matched then
-                        local text = string.lower(inst.Text or "")
-                        if string.match(text, "^%s*[%w%p]*%s*%d+%s*ms%s*$") then
-                            matched = true
-                        end
-                    end
-                    if matched then
-                        cached_label = inst
-                        return inst
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
--- Best-effort read of the "real" current ping.
--- If the label text is different from what we last wrote via applygc,
--- we treat it as a genuine game update (the game slipped an update in
--- between our patches) and cache it. Otherwise keep the last known value.
-local function sample_real_ping()
-    local label = find_ping_label()
-    if not label or not utility.is_valid(label) then return cached_real_ping end
-    local text = label.Text or ""
-    local n = tonumber(string.match(text, "(%-?%d+%.?%d*)"))
-    if not n then return cached_real_ping end
-    n = math.floor(n + 0.5)
-    if not menu.get("enabled") or n ~= cached_shown then
-        cached_real_ping = n
-    end
-    return cached_real_ping
-end
-
-local function compute_shown()
-    local mode   = menu.get("mode") or 0
-    local jitter = math.floor((menu.get("jitter") or 0) + 0.5)
+local function resample_value()
+    local base   = math.floor((menu.get("shown")  or 35) + 0.5)
+    local jitter = math.floor((menu.get("jitter") or 0)  + 0.5)
     local jval   = 0
     if jitter > 0 then jval = math.random(-jitter, jitter) end
-    last_jitter_ms = jval
+    current_value = math.max(1, base + jval)
+    return current_value
+end
 
-    local base
-    if mode == 1 then
-        base = math.floor((menu.get("fixed") or DEFAULT_FIXED) + 0.5)
-    else
-        base = sample_real_ping() + math.floor((menu.get("extra") or DEFAULT_EXTRA) + 0.5)
+local function tick_resample()
+    local now = utility.get_time() * 1000
+    if now >= next_resample_at then
+        local period = menu.get("resample") or 1000
+        if period < 50 then period = 50 end
+        next_resample_at = now + period
+        resample_value()
     end
-    return math.max(1, base + jval)
 end
 
 local function patch_now()
     if #parsed_keys == 0 then return 0 end
-    local desired = compute_shown()
-
     local values = {}
-    for _, k in ipairs(parsed_keys) do values[k] = desired end
-
+    for _, k in ipairs(parsed_keys) do values[k] = current_value end
     local patched = applygc(parsed_keys, values)
-    cached_shown     = desired
-    last_write_time  = utility.get_time()
-    last_write_count = patched
+    last_patch_count = patched
     return patched
 end
 
 local function ensure_worker()
-    local interval = math.floor((menu.get("interval") or DEFAULT_INTERVAL_MS) + 0.5)
+    local interval = math.floor((menu.get("interval") or 100) + 0.5)
     if interval < 1 then interval = 1 end
     if worker_thread and thread.is_running(worker_thread) then
         if interval ~= worker_interval then
@@ -236,7 +164,7 @@ local function ensure_worker()
     end
     worker_interval = interval
     worker_thread = thread.create(function()
-        if not menu.get("enabled") then return end
+        if not menu.get("gc_on") then return end
         refresh_keys_if_changed()
         patch_now()
     end, interval)
@@ -249,71 +177,68 @@ local function stop_worker()
     worker_thread = nil
 end
 
-------------------------------------------------------------
--- CALLBACKS — refresh caches / worker whenever config changes
-------------------------------------------------------------
-menu.set_callback("enabled", function(v)
+menu.set_callback("gc_on", function(v)
     if v then
         refresh_keys_if_changed()
         ensure_worker()
-        patch_now()                     -- instant application
+        tick_resample()
+        patch_now()
     else
         stop_worker()
     end
 end)
-
-menu.set_callback("keys", function(_) refresh_keys_if_changed() end)
-menu.set_callback("interval", function(_) ensure_worker() end)
-
--- Mode / value changes take effect on the next worker tick automatically.
+menu.set_callback("keys",     function(_) refresh_keys_if_changed() end)
+menu.set_callback("interval", function(_) if menu.get("gc_on") then ensure_worker() end end)
 
 ------------------------------------------------------------
--- on_frame — kept lightweight: sample real ping + update status label.
--- Actual patching happens on the background thread.
+-- DRAW HELPERS
 ------------------------------------------------------------
-local status_last_update = 0
-function on_frame()
-    refresh_keys_if_changed()
+local function draw_overlay_cover()
+    if not menu.get("overlay_on") then return end
 
-    -- Keep our best-effort real-ping cache warm.
-    sample_real_ping()
+    local w, _ = utility.get_screen_size()
+    local ox   = menu.get("ox") or 90
+    local oy   = menu.get("oy") or 20
+    local ow   = menu.get("ow") or 80
+    local oh   = menu.get("oh") or 22
+    local fs   = menu.get("font_size") or 13
 
-    -- Update the status label at ~5 Hz.
-    local now = utility.get_time()
-    if now - status_last_update >= 0.2 then
-        status_last_update = now
-        -- Nothing to draw from a label element — but we can print into
-        -- the console if debug ever gets flipped on. Leaving intentional
-        -- room here for future draw.text() based on-screen readouts.
+    local x = w - ox - ow
+    local y = oy
+
+    local bg  = menu.get_color("bgcol")
+    local tc  = menu.get_color("txtcol")
+
+    draw.rect_filled(x, y, ow, oh, bg)
+
+    local text = tostring(current_value) .. (menu.get("suffix") or " ms")
+    local tw, th = draw.get_text_size(text, fs)
+
+    local tx
+    if menu.get("center") then
+        tx = x + (ow - tw) * 0.5
+    else
+        tx = x + 4
     end
+    local ty = y + (oh - th) * 0.5
+    draw.text(tx, ty, text, tc, fs)
 
-    -- If the user enabled the spoof but the worker died (rare —
-    -- e.g. after the engine reset threads), restart it.
-    if menu.get("enabled") and not (worker_thread and thread.is_running(worker_thread)) then
-        ensure_worker()
+    if menu.get("guide") then
+        draw.rect(x, y, ow, oh, {1, 0.85, 0.2, 1.0}, 0, 2)
     end
 end
 
-------------------------------------------------------------
--- Optional on-screen readout — small floating text so you can see
--- what's happening without opening the menu.
-------------------------------------------------------------
-menu.add_checkbox("Ping Spoof", "Status", "show_readout",
-    "Show on-screen readout", true)
-
-local READOUT_OFFSET_X = 12
-local READOUT_OFFSET_Y = 12
-
-local original_on_frame = on_frame
-function on_frame()
-    original_on_frame()
+local function draw_status_readout()
     if not menu.get("show_readout") then return end
 
     local w, h = utility.get_screen_size()
-    local x = READOUT_OFFSET_X
-    local y = h - READOUT_OFFSET_Y - 46
+    local x = 12
+    local y = h - 12 - 46
 
-    local enabled = menu.get("enabled")
+    local overlay_on = menu.get("overlay_on")
+    local gc_on      = menu.get("gc_on")
+    local any_on     = overlay_on or gc_on
+
     local color_bg   = { 0.05, 0.06, 0.08, 0.85 }
     local color_line = { 0.20, 0.22, 0.28, 1.00 }
     local color_txt  = { 0.92, 0.94, 1.00, 1.00 }
@@ -324,18 +249,36 @@ function on_frame()
     draw.rect_filled(x, y, 210, 46, color_bg)
     draw.rect(x, y, 210, 46, color_line)
 
-    draw.text(x + 8, y + 6, "PING SPOOF",  color_dim, 12)
+    draw.text(x + 8, y + 6, "PING SPOOF", color_dim, 12)
     draw.text(x + 8, y + 24,
-        string.format("real %d  shown %d", cached_real_ping, cached_shown),
-        color_txt, 13)
+        string.format("shown %d ms", current_value), color_txt, 13)
 
-    local status_txt = enabled and "ON" or "OFF"
-    local status_col = enabled and color_on or color_off
+    local status_txt = any_on and "ON" or "OFF"
+    local status_col = any_on and color_on or color_off
     local tw, _ = draw.get_text_size(status_txt, 12)
     draw.text(x + 210 - tw - 8, y + 6, status_txt, status_col, 12)
 
-    local patch_txt = string.format("%d node(s)", last_write_count)
-    draw.text(x + 210 - 60, y + 26, patch_txt, color_dim, 11)
+    local mode_bits = {}
+    if overlay_on then table.insert(mode_bits, "OVL") end
+    if gc_on      then table.insert(mode_bits, "GC:"..tostring(last_patch_count)) end
+    if #mode_bits == 0 then table.insert(mode_bits, "-") end
+    draw.text(x + 210 - 80, y + 26, table.concat(mode_bits, " "), color_dim, 11)
 end
 
-print("[PingSpoof] Vector port loaded. Open the 'Ping Spoof' tab to configure.")
+------------------------------------------------------------
+-- MAIN LOOP
+------------------------------------------------------------
+function on_frame()
+    refresh_keys_if_changed()
+    tick_resample()
+
+    if menu.get("gc_on") and not (worker_thread and thread.is_running(worker_thread)) then
+        ensure_worker()
+    end
+
+    draw_overlay_cover()
+    draw_status_readout()
+end
+
+print("[PingSpoof] Vector port v6 loaded. Open the 'Ping Spoof' tab to configure.")
+print("[PingSpoof] Recommended: enable 'Draw overlay cover' and turn on 'Show position guide' to align it over the real ping.")
