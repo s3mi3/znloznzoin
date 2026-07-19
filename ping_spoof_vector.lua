@@ -455,16 +455,25 @@ local function parse_label_names(csv)
     return out
 end
 
+local function is_value_class(inst)
+    return inst:is_a("NumberValue") or inst:is_a("IntValue")
+        or inst:is_a("StringValue")
+end
+
 local function looks_like_ping_label(inst, wanted_names)
-    if not (inst:is_a("TextLabel") or inst:is_a("TextButton")) then
-        return false
-    end
+    local is_label = inst:is_a("TextLabel") or inst:is_a("TextButton")
+    local is_value = is_value_class(inst)
+    if not (is_label or is_value) then return false end
+
     local name = string.lower(inst.Name or "")
     for _, w in ipairs(wanted_names) do
         if string.find(name, w, 1, true) then return true end
     end
-    local text = string.lower(inst.Text or "")
-    if string.match(text, "^%s*%-?%d+%s*ms%s*$") then return true end
+
+    if is_label then
+        local text = string.lower(inst.Text or "")
+        if string.match(text, "^%s*%-?%d+%s*ms%s*$") then return true end
+    end
     return false
 end
 
@@ -496,8 +505,16 @@ local function scan_direct_labels(force)
     if game.local_player and utility.is_valid(game.local_player) then
         table.insert(roots, game.local_player)
     end
+    if game.players and utility.is_valid(game.players) then
+        table.insert(roots, game.players)
+    end
+    if game.workspace and utility.is_valid(game.workspace) then
+        table.insert(roots, game.workspace)
+    end
     local ok_sg, sg = pcall(function() return game.get_service("StarterGui") end)
     if ok_sg and sg then table.insert(roots, sg) end
+    local ok_rs, rs = pcall(function() return game.get_service("ReplicatedStorage") end)
+    if ok_rs and rs then table.insert(roots, rs) end
 
     for _, root in ipairs(roots) do
         local ok, descs = pcall(function() return root:get_descendants() end)
@@ -521,11 +538,19 @@ end
 
 local function direct_patch_labels()
     if #direct_labels == 0 then return 0 end
-    local text = tostring(current_value) .. (menu.get("suffix") or " ms")
+    local text_val   = tostring(current_value) .. (menu.get("suffix") or " ms")
+    local number_val = current_value
     local writes = 0
-    for _, lbl in ipairs(direct_labels) do
-        if utility.is_valid(lbl) then
-            local ok = pcall(function() lbl.Text = text end)
+    for _, inst in ipairs(direct_labels) do
+        if utility.is_valid(inst) then
+            local ok
+            if inst:is_a("TextLabel") or inst:is_a("TextButton") then
+                ok = pcall(function() inst.Text = text_val end)
+            elseif inst:is_a("NumberValue") or inst:is_a("IntValue") then
+                ok = pcall(function() inst.Value = number_val end)
+            elseif inst:is_a("StringValue") then
+                ok = pcall(function() inst.Value = text_val end)
+            end
             if ok then writes = writes + 1 end
         end
     end
