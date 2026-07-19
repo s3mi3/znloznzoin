@@ -51,16 +51,16 @@ menu.add_group("Ping Spoof", "Status", -1)
 
 menu.add_checkbox(   "Ping Spoof", "Spoof", "enabled", "Enable Spoof", false)
 menu.add_combo(      "Ping Spoof", "Spoof", "mode", "Mode",
-    {"Add to real", "Fixed value"}, DEFAULT_MODE_INDEX, { parent = "enabled" })
+    {"Add to real", "Fixed value"}, DEFAULT_MODE_INDEX)
 menu.add_slider_float("Ping Spoof", "Spoof", "interval", "Patch interval (ms)",
-    50, 1000, DEFAULT_INTERVAL_MS, "%.0f ms", { parent = "enabled" })
+    50, 1000, DEFAULT_INTERVAL_MS, "%.0f ms")
 
 menu.add_slider_float("Ping Spoof", "Values", "extra",  "Extra ping",
-    0, 500,  DEFAULT_EXTRA,  "+%.0f ms",   { parent = "enabled" })
+    0, 500,  DEFAULT_EXTRA,  "+%.0f ms")
 menu.add_slider_float("Ping Spoof", "Values", "fixed",  "Fixed ping",
-    1, 1000, DEFAULT_FIXED,  "%.0f ms",    { parent = "enabled" })
+    1, 1000, DEFAULT_FIXED,  "%.0f ms")
 menu.add_slider_float("Ping Spoof", "Values", "jitter", "Jitter",
-    0, 50,   DEFAULT_JITTER, "+/-%.0f ms", { parent = "enabled" })
+    0, 50,   DEFAULT_JITTER, "+/-%.0f ms")
 
 menu.add_input( "Ping Spoof", "Keys", "keys",
     "Ping key names (comma separated)", DEFAULT_KEYS)
