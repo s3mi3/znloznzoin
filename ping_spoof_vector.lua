@@ -57,11 +57,11 @@ menu.add_slider_float("Ping Spoof", "Value", "resample", "Update every",
 menu.add_slider_float("Ping Spoof", "Overlay position", "ox",
     "X from right edge", 0, 2000, 260, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "oy",
-    "Y from top", 0, 500, 4, "%.0f px")
+    "Y from top", 0, 500, 24, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "ow",
-    "Width", 20, 400, 90, "%.0f px")
+    "Width", 20, 400, 55, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "oh",
-    "Height", 10, 200, 30, "%.0f px")
+    "Height", 10, 200, 16, "%.0f px")
 menu.add_checkbox(    "Ping Spoof", "Overlay position", "guide",
     "Position mode  (drag / resize enabled)", true)
 menu.add_button(      "Ping Spoof", "Overlay position", "lockbtn",
@@ -72,7 +72,7 @@ menu.add_button(      "Ping Spoof", "Overlay position", "lockbtn",
 -- Style — replicate the Roblox Performance Stats "NetworkPing" cell.
 -- Background is fully opaque so the real text never bleeds through.
 menu.add_checkbox(     "Ping Spoof", "Style", "show_label",
-    "Draw label above value", true)
+    "Draw label above value  (off = cover only the number)", false)
 menu.add_input(        "Ping Spoof", "Style", "label_text",
     "Label text", "NetworkPing")
 menu.add_checkbox(     "Ping Spoof", "Style", "auto_fit",
