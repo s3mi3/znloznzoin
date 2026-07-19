@@ -57,25 +57,37 @@ menu.add_slider_float("Ping Spoof", "Value", "resample", "Update every",
 menu.add_slider_float("Ping Spoof", "Overlay position", "ox",
     "X from right edge", 0, 2000, 250, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "oy",
-    "Y from top", 0, 500, 24, "%.0f px")
+    "Y from top", 0, 500, 6, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "ow",
-    "Width", 20, 400, 90, "%.0f px")
+    "Width", 20, 400, 130, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "oh",
-    "Height", 10, 120, 20, "%.0f px")
+    "Height", 10, 200, 42, "%.0f px")
 menu.add_checkbox(    "Ping Spoof", "Overlay position", "guide",
-    "Show position guide (yellow outline)", false)
+    "Position mode  (drag / resize enabled)", true)
+menu.add_button(      "Ping Spoof", "Overlay position", "lockbtn",
+    "Lock overlay (hide guide)", function()
+        menu.set("guide", false)
+    end)
 
--- Style — defaults blend into the Roblox Performance Stats bar
--- (dark semi-transparent grey background, white text).
-menu.add_slider_float( "Ping Spoof", "Style", "font_size", "Font size",
-    8, 32, 13, "%.0f")
+-- Style — replicate the Roblox Performance Stats "NetworkPing" cell:
+-- dark semi-transparent grey background, dim label on top, white value below.
+menu.add_checkbox(     "Ping Spoof", "Style", "show_label",
+    "Draw label above value", true)
+menu.add_input(        "Ping Spoof", "Style", "label_text",
+    "Label text", "NetworkPing")
+menu.add_slider_float( "Ping Spoof", "Style", "label_size",
+    "Label size", 6, 20, 10, "%.0f")
+menu.add_slider_float( "Ping Spoof", "Style", "font_size",
+    "Value size", 8, 32, 13, "%.0f")
 menu.add_input(        "Ping Spoof", "Style", "suffix", "Suffix", " ms")
 menu.add_colorpicker(  "Ping Spoof", "Style", "bgcol",  "Background",
-    {0.13, 0.13, 0.14, 0.85})
-menu.add_colorpicker(  "Ping Spoof", "Style", "txtcol", "Text",
+    {0.14, 0.14, 0.14, 0.85})
+menu.add_colorpicker(  "Ping Spoof", "Style", "labelcol", "Label color",
+    {0.70, 0.70, 0.70, 1.00})
+menu.add_colorpicker(  "Ping Spoof", "Style", "txtcol", "Value color",
     {1.00, 1.00, 1.00, 1.00})
 menu.add_checkbox(     "Ping Spoof", "Style", "center",
-    "Center text (else left align)", true)
+    "Center value (else left align)", false)
 
 -- GC patching
 menu.add_input(       "Ping Spoof", "GC patching", "keys",
@@ -311,34 +323,42 @@ local function draw_overlay_cover()
     if not menu.get("overlay_on") then return end
 
     local x, y, ow, oh = get_overlay_rect()
-    local fs  = menu.get("font_size") or 13
-    local bg  = menu.get_color("bgcol")
-    local tc  = menu.get_color("txtcol")
+    local fs         = menu.get("font_size") or 13
+    local ls         = menu.get("label_size") or 10
+    local show_label = menu.get("show_label")
+    local label_text = menu.get("label_text") or "NetworkPing"
+    local bg         = menu.get_color("bgcol")
+    local tc         = menu.get_color("txtcol")
+    local lc         = menu.get_color("labelcol")
 
     draw.rect_filled(x, y, ow, oh, bg)
 
-    local text = tostring(current_value) .. (menu.get("suffix") or " ms")
-    local tw, th = draw.get_text_size(text, fs)
+    local value_text = tostring(current_value) .. (menu.get("suffix") or " ms")
 
-    local tx
-    if menu.get("center") then
-        tx = x + (ow - tw) * 0.5
+    local pad = 4
+    if show_label then
+        -- Roblox stats-cell layout: label small at top, value below it.
+        local _lw, lh = draw.get_text_size(label_text, ls)
+        draw.text(x + pad, y + pad, label_text, lc, ls)
+
+        local vw, _vh = draw.get_text_size(value_text, fs)
+        local vx = menu.get("center") and (x + (ow - vw) * 0.5) or (x + pad)
+        local vy = y + pad + lh + 2
+        draw.text(vx, vy, value_text, tc, fs)
     else
-        tx = x + 4
+        local vw, vh = draw.get_text_size(value_text, fs)
+        local vx = menu.get("center") and (x + (ow - vw) * 0.5) or (x + pad)
+        local vy = y + (oh - vh) * 0.5
+        draw.text(vx, vy, value_text, tc, fs)
     end
-    local ty = y + (oh - th) * 0.5
-    draw.text(tx, ty, text, tc, fs)
 
     if menu.get("guide") then
-        -- outline
         draw.rect(x, y, ow, oh, {1, 0.85, 0.2, 1.0}, 0, 2)
-        -- resize handle (bottom-right corner)
         draw.rect_filled(x + ow - 12, y + oh - 12, 12, 12,
             {1, 0.85, 0.2, 0.85})
-        -- drag hint text
         local hint = drag_active
             and (drag_mode == "resize" and "resizing..." or "moving...")
-            or  "drag to move  •  corner to resize"
+            or  "drag to move  -  corner to resize  -  uncheck Position mode to lock"
         local hw, _ = draw.get_text_size(hint, 11)
         draw.text(x + (ow - hw) * 0.5, y - 14, hint,
             {1, 0.9, 0.4, 1}, 11)
