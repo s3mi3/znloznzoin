@@ -70,7 +70,7 @@ menu.add_button("Ping Spoof", "Keys", "dumpbtn", "Dump GC to file", function()
     print("[PingSpoof] Wrote " .. tostring(n) .. " entries.")
 end)
 menu.add_button("Ping Spoof", "Keys", "warmbtn", "Warm key cache", function()
-    local keys = ({})
+    local keys = {}
     for k in string.gmatch(menu.get("keys") or "", "([^,]+)") do
         local trimmed = k:match("^%s*(.-)%s*$")
         if trimmed ~= "" then table.insert(keys, trimmed) end
