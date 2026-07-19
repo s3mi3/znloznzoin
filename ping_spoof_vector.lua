@@ -31,8 +31,8 @@ local DEFAULT_DUMP_PATH = "C:/vector_gc_dump.txt"
 menu.add_tab("Ping Spoof", "P")
 
 menu.add_group("Ping Spoof", "Method",           -1)
-menu.add_group("Ping Spoof", "Value",             0)
-menu.add_group("Ping Spoof", "Overlay position",  0, true)
+menu.add_group("Ping Spoof", "Value",            -1)
+menu.add_group("Ping Spoof", "Overlay position", -1)
 menu.add_group("Ping Spoof", "Style",            -1)
 menu.add_group("Ping Spoof", "GC patching",      -1)
 menu.add_group("Ping Spoof", "Status",           -1)
