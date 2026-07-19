@@ -38,10 +38,15 @@ menu.add_group("Ping Spoof", "GC patching",      -1)
 menu.add_group("Ping Spoof", "Status",           -1)
 
 -- Method
+menu.add_checkbox("Ping Spoof", "Method", "direct_on",
+    "Direct label modification  (try me first!)", true)
 menu.add_checkbox("Ping Spoof", "Method", "overlay_on",
-    "Draw overlay cover  (recommended)", true)
+    "Draw overlay cover  (always works)", true)
 menu.add_checkbox("Ping Spoof", "Method", "gc_on",
-    "Also patch game Lua state (advanced)", false)
+    "Patch game Lua state via GC (very advanced)", false)
+menu.add_input(   "Ping Spoof", "Method", "label_names",
+    "Label names to hunt (comma sep.)",
+    "NetworkPing,PingItem,PingLabel,NetworkPingValue,PingValue,PingText")
 
 -- Value
 menu.add_slider_float("Ping Spoof", "Value", "shown",  "Ping to display",
@@ -157,6 +162,13 @@ local drag_start_oy = 0
 local drag_start_ow = 0
 local drag_start_oh = 0
 local prev_lmb      = false
+
+-- Direct label modification state.
+local direct_labels       = {}
+local last_direct_scan    = 0
+local direct_scan_status  = "not scanned yet"
+local last_label_names    = ""
+local last_direct_writes  = 0
 
 ------------------------------------------------------------
 -- HELPERS
@@ -411,10 +423,114 @@ local function draw_status_readout()
     draw.text(x + 210 - tw - 8, y + 6, status_txt, status_col, 12)
 
     local mode_bits = {}
+    if menu.get("direct_on") then
+        table.insert(mode_bits, "DIR:"..tostring(last_direct_writes))
+    end
     if overlay_on then table.insert(mode_bits, "OVL") end
     if gc_on      then table.insert(mode_bits, "GC:"..tostring(last_patch_count)) end
     if #mode_bits == 0 then table.insert(mode_bits, "-") end
-    draw.text(x + 210 - 80, y + 26, table.concat(mode_bits, " "), color_dim, 11)
+    draw.text(x + 210 - 105, y + 26, table.concat(mode_bits, " "), color_dim, 11)
+end
+
+------------------------------------------------------------
+-- DIRECT LABEL MODIFICATION (executor-style approach ported to Vector).
+--
+-- Walks workspace.Parent → DataModel → CoreGui and finds every TextLabel
+-- whose Name matches one of the user-supplied label names (or whose text
+-- looks like "<number> ms"). Then writes `label.Text = "<value> ms"`
+-- every frame so the game can't restore the real ping.
+--
+-- Vector's Game API marks GuiObject.Text as read-only. This method might
+-- therefore silently no-op — but it costs almost nothing to try, and if
+-- Vector lets the write through it's the cleanest possible spoof (no
+-- overlay, no memory offsets, real number changes).
+------------------------------------------------------------
+
+local function parse_label_names(csv)
+    local out = {}
+    for k in string.gmatch(csv or "", "([^,]+)") do
+        local t = k:match("^%s*(.-)%s*$")
+        if t ~= "" then table.insert(out, string.lower(t)) end
+    end
+    return out
+end
+
+local function looks_like_ping_label(inst, wanted_names)
+    if not (inst:is_a("TextLabel") or inst:is_a("TextButton")) then
+        return false
+    end
+    local name = string.lower(inst.Name or "")
+    for _, w in ipairs(wanted_names) do
+        if string.find(name, w, 1, true) then return true end
+    end
+    local text = string.lower(inst.Text or "")
+    if string.match(text, "^%s*%-?%d+%s*ms%s*$") then return true end
+    return false
+end
+
+local function try_get_coregui()
+    local ws = game.workspace
+    if not ws or not utility.is_valid(ws) then return nil end
+    local dm = ws.Parent
+    if not dm then return nil end
+    local ok, cg = pcall(function() return dm:find_first_child("CoreGui") end)
+    if ok and cg then return cg end
+    return nil
+end
+
+local function scan_direct_labels(force)
+    local names_csv = menu.get("label_names") or ""
+    if not force and names_csv == last_label_names then
+        local now = utility.get_time()
+        if now - last_direct_scan < 2.0 then return end
+    end
+    last_label_names = names_csv
+    last_direct_scan = utility.get_time()
+
+    local wanted = parse_label_names(names_csv)
+    local found = {}
+
+    local roots = {}
+    local cg = try_get_coregui()
+    if cg then table.insert(roots, cg) end
+    if game.local_player and utility.is_valid(game.local_player) then
+        table.insert(roots, game.local_player)
+    end
+    local ok_sg, sg = pcall(function() return game.get_service("StarterGui") end)
+    if ok_sg and sg then table.insert(roots, sg) end
+
+    for _, root in ipairs(roots) do
+        local ok, descs = pcall(function() return root:get_descendants() end)
+        if ok and type(descs) == "table" then
+            for _, inst in ipairs(descs) do
+                local ok2, is_match = pcall(looks_like_ping_label, inst, wanted)
+                if ok2 and is_match and utility.is_valid(inst) then
+                    table.insert(found, inst)
+                end
+            end
+        end
+    end
+
+    direct_labels = found
+    if #found == 0 then
+        direct_scan_status = ("no matching label (roots=%d)"):format(#roots)
+    else
+        direct_scan_status = ("found %d label(s)"):format(#found)
+    end
+end
+
+local function direct_patch_labels()
+    if #direct_labels == 0 then return 0 end
+    local text = tostring(current_value) .. (menu.get("suffix") or " ms")
+    local writes = 0
+    for _, lbl in ipairs(direct_labels) do
+        if utility.is_valid(lbl) then
+            local ok = pcall(function() lbl.Text = text end)
+            if ok then writes = writes + 1 end
+        end
+    end
+    last_direct_writes = writes
+    return writes
 end
 
 ------------------------------------------------------------
@@ -426,6 +542,11 @@ function on_frame()
 
     if menu.get("gc_on") and not (worker_thread and thread.is_running(worker_thread)) then
         ensure_worker()
+    end
+
+    if menu.get("direct_on") then
+        scan_direct_labels(false)
+        direct_patch_labels()
     end
 
     handle_drag()
