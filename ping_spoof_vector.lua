@@ -55,13 +55,13 @@ menu.add_slider_float("Ping Spoof", "Value", "resample", "Update every",
 -- Performance Stats "NetworkPing" cell on a common 1920-wide screen;
 -- fine-tune with the position guide.
 menu.add_slider_float("Ping Spoof", "Overlay position", "ox",
-    "X from right edge", 0, 2000, 250, "%.0f px")
+    "X from right edge", 0, 2000, 260, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "oy",
-    "Y from top", 0, 500, 6, "%.0f px")
+    "Y from top", 0, 500, 4, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "ow",
-    "Width", 20, 400, 130, "%.0f px")
+    "Width", 20, 400, 90, "%.0f px")
 menu.add_slider_float("Ping Spoof", "Overlay position", "oh",
-    "Height", 10, 200, 42, "%.0f px")
+    "Height", 10, 200, 30, "%.0f px")
 menu.add_checkbox(    "Ping Spoof", "Overlay position", "guide",
     "Position mode  (drag / resize enabled)", true)
 menu.add_button(      "Ping Spoof", "Overlay position", "lockbtn",
@@ -69,21 +69,23 @@ menu.add_button(      "Ping Spoof", "Overlay position", "lockbtn",
         menu.set("guide", false)
     end)
 
--- Style — replicate the Roblox Performance Stats "NetworkPing" cell:
--- dark semi-transparent grey background, dim label on top, white value below.
+-- Style — replicate the Roblox Performance Stats "NetworkPing" cell.
+-- Background is fully opaque so the real text never bleeds through.
 menu.add_checkbox(     "Ping Spoof", "Style", "show_label",
     "Draw label above value", true)
 menu.add_input(        "Ping Spoof", "Style", "label_text",
     "Label text", "NetworkPing")
+menu.add_checkbox(     "Ping Spoof", "Style", "auto_fit",
+    "Auto-fit text to box size", true)
 menu.add_slider_float( "Ping Spoof", "Style", "label_size",
-    "Label size", 6, 20, 10, "%.0f")
+    "Label size (when auto-fit off)", 6, 20, 10, "%.0f")
 menu.add_slider_float( "Ping Spoof", "Style", "font_size",
-    "Value size", 8, 32, 13, "%.0f")
+    "Value size (when auto-fit off)", 8, 32, 13, "%.0f")
 menu.add_input(        "Ping Spoof", "Style", "suffix", "Suffix", " ms")
 menu.add_colorpicker(  "Ping Spoof", "Style", "bgcol",  "Background",
-    {0.14, 0.14, 0.14, 0.85})
+    {0.14, 0.14, 0.14, 1.00})
 menu.add_colorpicker(  "Ping Spoof", "Style", "labelcol", "Label color",
-    {0.70, 0.70, 0.70, 1.00})
+    {0.75, 0.75, 0.75, 1.00})
 menu.add_colorpicker(  "Ping Spoof", "Style", "txtcol", "Value color",
     {1.00, 1.00, 1.00, 1.00})
 menu.add_checkbox(     "Ping Spoof", "Style", "center",
@@ -323,27 +325,40 @@ local function draw_overlay_cover()
     if not menu.get("overlay_on") then return end
 
     local x, y, ow, oh = get_overlay_rect()
-    local fs         = menu.get("font_size") or 13
-    local ls         = menu.get("label_size") or 10
     local show_label = menu.get("show_label")
     local label_text = menu.get("label_text") or "NetworkPing"
     local bg         = menu.get_color("bgcol")
     local tc         = menu.get_color("txtcol")
     local lc         = menu.get_color("labelcol")
 
+    -- Compute font sizes. Auto-fit derives them from box height so
+    -- resizing scales the text along with the box.
+    local ls, fs
+    if menu.get("auto_fit") then
+        if show_label then
+            ls = math.max(6,  math.floor(oh * 0.32))
+            fs = math.max(8,  math.floor(oh * 0.44))
+        else
+            fs = math.max(8,  math.floor(oh * 0.65))
+            ls = 10
+        end
+    else
+        ls = menu.get("label_size") or 10
+        fs = menu.get("font_size")  or 13
+    end
+
     draw.rect_filled(x, y, ow, oh, bg)
 
     local value_text = tostring(current_value) .. (menu.get("suffix") or " ms")
 
-    local pad = 4
+    local pad = math.max(2, math.floor(oh * 0.08))
     if show_label then
-        -- Roblox stats-cell layout: label small at top, value below it.
         local _lw, lh = draw.get_text_size(label_text, ls)
         draw.text(x + pad, y + pad, label_text, lc, ls)
 
         local vw, _vh = draw.get_text_size(value_text, fs)
         local vx = menu.get("center") and (x + (ow - vw) * 0.5) or (x + pad)
-        local vy = y + pad + lh + 2
+        local vy = y + pad + lh + 1
         draw.text(vx, vy, value_text, tc, fs)
     else
         local vw, vh = draw.get_text_size(value_text, fs)
