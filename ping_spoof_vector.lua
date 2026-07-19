@@ -133,6 +133,17 @@ local current_value    = 35    -- what the overlay + patch is displaying
 local next_resample_at = 0
 local last_patch_count = 0
 
+-- Drag-to-position state.
+local drag_active   = false
+local drag_mode     = nil    -- "move" or "resize"
+local drag_start_mx = 0
+local drag_start_my = 0
+local drag_start_ox = 0
+local drag_start_oy = 0
+local drag_start_ow = 0
+local drag_start_oh = 0
+local prev_lmb      = false
+
 ------------------------------------------------------------
 -- HELPERS
 ------------------------------------------------------------
@@ -222,19 +233,85 @@ menu.set_callback("interval", function(_) if menu.get("gc_on") then ensure_worke
 ------------------------------------------------------------
 -- DRAW HELPERS
 ------------------------------------------------------------
-local function draw_overlay_cover()
-    if not menu.get("overlay_on") then return end
-
+local function get_overlay_rect()
     local w, _ = utility.get_screen_size()
     local ox   = menu.get("ox") or 90
     local oy   = menu.get("oy") or 20
     local ow   = menu.get("ow") or 80
     local oh   = menu.get("oh") or 22
-    local fs   = menu.get("font_size") or 13
+    return w - ox - ow, oy, ow, oh
+end
 
-    local x = w - ox - ow
-    local y = oy
+-- When the position guide is on, allow dragging the overlay with the mouse.
+-- LMB anywhere inside the box = move.
+-- LMB in the bottom-right 16x16 corner = resize.
+local function handle_drag()
+    if not menu.get("overlay_on") then drag_active = false; return end
+    if not menu.get("guide") then drag_active = false; return end
 
+    local lmb = input.is_key_down(0x01)
+    local mx, my = utility.get_mouse_pos()
+    local x, y, ow, oh = get_overlay_rect()
+
+    local w_screen, _ = utility.get_screen_size()
+
+    local inside = mx >= x - 4 and mx <= x + ow + 4
+               and my >= y - 4 and my <= y + oh + 4
+    local in_resize = mx >= x + ow - 16 and mx <= x + ow + 6
+                  and my >= y + oh - 16 and my <= y + oh + 6
+
+    if lmb and not prev_lmb then
+        -- LMB just pressed
+        if inside then
+            drag_active   = true
+            drag_mode     = in_resize and "resize" or "move"
+            drag_start_mx = mx
+            drag_start_my = my
+            drag_start_ox = menu.get("ox") or 0
+            drag_start_oy = menu.get("oy") or 0
+            drag_start_ow = ow
+            drag_start_oh = oh
+        end
+    end
+
+    if drag_active and lmb then
+        local dx = mx - drag_start_mx
+        local dy = my - drag_start_my
+        if drag_mode == "move" then
+            -- Overlay X is measured from the right edge, so moving the mouse
+            -- right (positive dx) should decrease ox.
+            local new_ox = drag_start_ox - dx
+            local new_oy = drag_start_oy + dy
+            if new_ox < 0 then new_ox = 0 end
+            if new_oy < 0 then new_oy = 0 end
+            if new_ox > w_screen - drag_start_ow then
+                new_ox = w_screen - drag_start_ow
+            end
+            menu.set("ox", new_ox)
+            menu.set("oy", new_oy)
+        elseif drag_mode == "resize" then
+            local new_ow = drag_start_ow + dx
+            local new_oh = drag_start_oh + dy
+            if new_ow < 20 then new_ow = 20 end
+            if new_oh < 10 then new_oh = 10 end
+            -- keep the right edge fixed → adjust ox as width grows.
+            local new_ox = drag_start_ox - (new_ow - drag_start_ow)
+            if new_ox < 0 then new_ox = 0 end
+            menu.set("ow", new_ow)
+            menu.set("oh", new_oh)
+            menu.set("ox", new_ox)
+        end
+    end
+
+    if not lmb then drag_active = false end
+    prev_lmb = lmb
+end
+
+local function draw_overlay_cover()
+    if not menu.get("overlay_on") then return end
+
+    local x, y, ow, oh = get_overlay_rect()
+    local fs  = menu.get("font_size") or 13
     local bg  = menu.get_color("bgcol")
     local tc  = menu.get_color("txtcol")
 
@@ -253,7 +330,18 @@ local function draw_overlay_cover()
     draw.text(tx, ty, text, tc, fs)
 
     if menu.get("guide") then
+        -- outline
         draw.rect(x, y, ow, oh, {1, 0.85, 0.2, 1.0}, 0, 2)
+        -- resize handle (bottom-right corner)
+        draw.rect_filled(x + ow - 12, y + oh - 12, 12, 12,
+            {1, 0.85, 0.2, 0.85})
+        -- drag hint text
+        local hint = drag_active
+            and (drag_mode == "resize" and "resizing..." or "moving...")
+            or  "drag to move  •  corner to resize"
+        local hw, _ = draw.get_text_size(hint, 11)
+        draw.text(x + (ow - hw) * 0.5, y - 14, hint,
+            {1, 0.9, 0.4, 1}, 11)
     end
 end
 
@@ -305,6 +393,7 @@ function on_frame()
         ensure_worker()
     end
 
+    handle_drag()
     draw_overlay_cover()
     draw_status_readout()
 end
