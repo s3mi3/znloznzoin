@@ -169,6 +169,8 @@ local last_direct_scan    = 0
 local direct_scan_status  = "not scanned yet"
 local last_label_names    = ""
 local last_direct_writes  = 0
+local direct_scan_thread  = nil
+local last_direct_value   = nil     -- last value we successfully wrote
 
 ------------------------------------------------------------
 -- HELPERS
@@ -499,27 +501,30 @@ local function scan_direct_labels(force)
     local wanted = parse_label_names(names_csv)
     local found = {}
 
+    -- Roots kept intentionally NARROW — walking workspace / ReplicatedStorage
+    -- in a big game (Da Hood etc.) is tens of thousands of instances, and
+    -- every property read in Vector is a cross-process memory access.
+    -- Ping-related instances practically only live in CoreGui, PlayerGui,
+    -- or StarterGui replicas, so we only scan those.
     local roots = {}
     local cg = try_get_coregui()
     if cg then table.insert(roots, cg) end
     if game.local_player and utility.is_valid(game.local_player) then
         table.insert(roots, game.local_player)
     end
-    if game.players and utility.is_valid(game.players) then
-        table.insert(roots, game.players)
-    end
-    if game.workspace and utility.is_valid(game.workspace) then
-        table.insert(roots, game.workspace)
-    end
     local ok_sg, sg = pcall(function() return game.get_service("StarterGui") end)
     if ok_sg and sg then table.insert(roots, sg) end
-    local ok_rs, rs = pcall(function() return game.get_service("ReplicatedStorage") end)
-    if ok_rs and rs then table.insert(roots, rs) end
 
+    local MAX_SCAN = 5000   -- hard cap on descendants examined per scan
+
+    local count = 0
     for _, root in ipairs(roots) do
+        if count >= MAX_SCAN then break end
         local ok, descs = pcall(function() return root:get_descendants() end)
         if ok and type(descs) == "table" then
             for _, inst in ipairs(descs) do
+                count = count + 1
+                if count >= MAX_SCAN then break end
                 local ok2, is_match = pcall(looks_like_ping_label, inst, wanted)
                 if ok2 and is_match and utility.is_valid(inst) then
                     table.insert(found, inst)
@@ -561,6 +566,17 @@ end
 ------------------------------------------------------------
 -- MAIN LOOP
 ------------------------------------------------------------
+-- Background scan thread — runs off the render loop so the label hunt
+-- never freezes Roblox even in massive games.
+local function ensure_scan_thread()
+    if direct_scan_thread and thread.is_running(direct_scan_thread) then return end
+    direct_scan_thread = thread.create(function()
+        if menu.get("direct_on") then
+            pcall(scan_direct_labels, false)
+        end
+    end, 2000)
+end
+
 function on_frame()
     refresh_keys_if_changed()
     tick_resample()
@@ -570,8 +586,14 @@ function on_frame()
     end
 
     if menu.get("direct_on") then
-        scan_direct_labels(false)
-        direct_patch_labels()
+        ensure_scan_thread()
+        -- Only write to labels when the target value has actually changed
+        -- (each resample tick). Writing every frame is wasteful and — in
+        -- games with lots of matching labels — visibly stutters the game.
+        if current_value ~= last_direct_value then
+            direct_patch_labels()
+            last_direct_value = current_value
+        end
     end
 
     handle_drag()
