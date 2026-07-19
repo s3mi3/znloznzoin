@@ -82,11 +82,37 @@ menu.add_input(       "Ping Spoof", "GC patching", "keys",
     "Ping key names (comma separated)", DEFAULT_KEYS)
 menu.add_slider_float("Ping Spoof", "GC patching", "interval",
     "Patch interval", 50, 1000, 100, "%.0f ms")
+menu.add_input(       "Ping Spoof", "GC patching", "search_val",
+    "Current real ping (for search)", "59")
 menu.add_button(      "Ping Spoof", "GC patching", "dumpbtn",
     "Dump GC to file", function()
         print("[PingSpoof] Dumping GC to " .. DEFAULT_DUMP_PATH .. " ...")
         local n = dumpgc(DEFAULT_DUMP_PATH)
         print("[PingSpoof] Wrote " .. tostring(n) .. " entries.")
+        print("[PingSpoof] Open the file and search for '= " ..
+            tostring(menu.get("search_val") or "") ..
+            "' (your current real ping) to find the ping key.")
+    end)
+menu.add_button(      "Ping Spoof", "GC patching", "try_common",
+    "Try common CoreScript ping keys", function()
+        local candidates = {
+            "pingMs", "PingMs", "networkPingMs",
+            "dataPing", "DataPing",
+            "lastPing", "LastPing",
+            "Value",   -- some CoreScripts use generic value fields
+        }
+        local extra = {}
+        for k in string.gmatch(menu.get("keys") or "", "([^,]+)") do
+            local t = k:match("^%s*(.-)%s*$")
+            if t ~= "" then table.insert(extra, t) end
+        end
+        for _, k in ipairs(candidates) do table.insert(extra, k) end
+        local seen, unique = {}, {}
+        for _, k in ipairs(extra) do
+            if not seen[k] then seen[k] = true; table.insert(unique, k) end
+        end
+        menu.set("keys", table.concat(unique, ","))
+        print("[PingSpoof] Expanded key list to " .. #unique .. " candidates.")
     end)
 
 -- Status
